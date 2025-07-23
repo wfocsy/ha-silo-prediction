@@ -16,16 +16,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     # Load sensor platform
-    hass.async_create_task(
-        hass.helpers.discovery.async_load_platform(
-            "sensor", DOMAIN, {}, config # Pass the full config if needed by sensor.py
-        )
+    await hass.helpers.discovery.async_load_platform(
+        "sensor", DOMAIN, {}, config # Pass the full config if needed by sensor.py
     )
 
     return True
 
-async def async_unload_platform(hass: HomeAssistant, config: ConfigType, platform: str) -> bool:
-    """Unload a platform."""
-    _LOGGER.debug(f"Unloading platform {platform} for Silo Prediction.")
-    # Implement additional unload logic if necessary for other platforms later
-    return True
+# No unload function is needed since this integration does not use config entries or config_flow.# No unload function is needed since this integration does not use config entries or config_flow.
+# If you later add an unload function, use logger formatting like:
+# _LOGGER.debug("Unloading platform %s for Silo Prediction.", platform)
