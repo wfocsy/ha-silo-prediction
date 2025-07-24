@@ -1,0 +1,8 @@
+{
+  "name": "Silo Prediction Add-ons",
+  "url": "https://github.com/wfocsy/ha-silo-prediction",
+  "maintainer": "wfocsy",
+  "addons": [
+    "silo_prediction_addon"
+  ]
+}
