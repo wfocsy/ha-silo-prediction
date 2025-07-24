@@ -19,7 +19,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_track_time_interval
 
 # Import DOMAIN from __init__.py if needed, or define it here for clarity
-from . import DOMAIN # This imports DOMAIN from __init__.py
+from . import DOMAIN # Helyes import, így működik a Home Assistant custom component
 
 _LOGGER = logging.getLogger(__name__)
 
