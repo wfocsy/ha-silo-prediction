@@ -1,3 +1,45 @@
+## Telepítés és használat Home Assistant OS alatt
+
+1. **Add-on repó hozzáadása**
+   - Home Assistantban menj a **Beállítások → Kiegészítők → Kiegészítő tárolók** menüpontra.
+   - Kattints a jobb alsó sarokban a **Tároló hozzáadása** gombra.
+   - Add meg ezt a repó URL-t:
+     ```
+     https://github.com/wfocsy/ha-silo-prediction
+     ```
+   - Mentsd el, majd a listában megjelenik a `silo_prediction_addon`.
+
+2. **Add-on telepítése**
+   - Válaszd ki a `silo_prediction_addon`-t a listából.
+   - Kattints a **Telepítés** gombra.
+
+3. **Konfiguráció**
+   - Szükség esetén szerkeszd a `config.json`-t (pl. adatbázis elérés, entity_id).
+   - Alapértelmezés szerint a Home Assistant saját MariaDB-jét használja (host: `core-mariadb`).
+
+4. **Add-on indítása**
+   - Kattints az **Indítás** gombra.
+   - Az Add-on elindít egy REST API-t a 5000-es porton.
+
+5. **RESTful szenzor beállítása Home Assistantban**
+   - Hozz létre egy RESTful szenzort a configuration.yaml-ban vagy a GUI-ban, pl.:
+     ```yaml
+     sensor:
+       - platform: rest
+         name: Silo 0kg becsült idő
+         resource: "http://localhost:5000/predict"
+         value_template: "{{ value_json.predicted_0kg }}"
+         json_attributes:
+           - status
+           - error
+     ```
+   - Indítsd újra a Home Assistantot vagy töltsd újra a szenzorokat.
+
+6. **Eredmény**
+   - A szenzor állapota a becsült 0kg időpont lesz, extra attribútumokkal (pl. status, error).
+
+**Megjegyzés:**
+- A custom_components/HACS verziót Home Assistant OS alatt nem lehet használni, csak az Add-on működik!
 ## Predikciós (business) logika működése
 
 A predikciós logika célja, hogy előrejelezze, mikor fog a siló tömege elérni a 0 kg-ot, azaz mikor fogy ki a takarmány. Az algoritmus lépései:
