@@ -10,6 +10,7 @@
     "5000/tcp": 5000
   },
   "host_network": true,
+  "image": "local/silo_prediction_addon-{arch}",
   "options": {},
   "schema": {}
 }
