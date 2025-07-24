@@ -7,12 +7,7 @@
   "documentation": "https://github.com/wfocsy/ha-silo-prediction",
   "issue_tracker": "https://github.com/wfocsy/ha-silo-prediction/issues",
   "dependencies": [],
-  "requirements": [
-    "pandas==2.2.2",
-    "numpy==1.26.4",
-    "scikit-learn==1.4.2",
-    "mysql-connector-python==8.4.0"
-  ],
+  
   "iot_class": "local_polling",
   "loggers": ["custom_components.silo_prediction"]
 }
