@@ -1,7 +1,7 @@
 {
   "domain": "silo_prediction",
   "name": "Siló Kifogyás Előrejelzés",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "codeowners": ["@silo_dev"],
   "config_flow": false,
   "documentation": "https://github.com/wfocsy/ha-silo-prediction",
@@ -11,3 +11,7 @@
   "iot_class": "local_polling",
   "loggers": ["custom_components.silo_prediction"]
 }
+
+
+
+
