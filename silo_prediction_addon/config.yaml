@@ -1,5 +1,5 @@
 name: Silo Prediction Add-on
-version: "1.1.0"
+version: "1.1.1"
 slug: silo_prediction_addon
 description: Silo 0kg predikció REST API
 url: "https://github.com/wfocsy/ha-silo-prediction"
