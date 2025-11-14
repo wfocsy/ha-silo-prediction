@@ -359,11 +359,17 @@ class SiloPredictionService:
                     import json
                     attributes_json = json.dumps(attributes)
 
-                    # DEBUG: Check states table schema
-                    schema_query = "DESCRIBE states"
-                    cursor.execute(schema_query)
-                    schema = cursor.fetchall()
-                    logger.info(f"DEBUG - states table schema: {schema}")
+                    # DEBUG: Check states_meta table
+                    meta_query = "DESCRIBE states_meta"
+                    cursor.execute(meta_query)
+                    meta_schema = cursor.fetchall()
+                    logger.info(f"DEBUG - states_meta table schema: {meta_schema}")
+
+                    # Check if our entity exists in states_meta
+                    check_meta_query = "SELECT * FROM states_meta WHERE entity_id = %s"
+                    cursor.execute(check_meta_query, (entity_id,))
+                    existing_meta = cursor.fetchone()
+                    logger.info(f"DEBUG - Existing metadata for {entity_id}: {existing_meta}")
 
                     # Első: Ellenőrizzük hogy létezik-e már az entitás
                     check_query = "SELECT entity_id FROM states WHERE entity_id = %s ORDER BY last_updated DESC LIMIT 1"
