@@ -1,30 +1,20 @@
-ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM python:3.11-slim
 
-# Install Python and required packages
-RUN \
-  apk add --no-cache \
-    python3 \
-    py3-pip \
-    py3-numpy \
-    py3-pandas \
-    py3-scikit-learn && \
-  pip3 install --break-system-packages --no-cache-dir \
-    flask \
-    pymysql \
-    scipy \
-    python-dateutil
-
-# Set working directory
 WORKDIR /app
 
-# Copy application files
-COPY app.py /app/app.py
-COPY requirements.txt /app/requirements.txt
+# Install dependencies
+RUN pip install --no-cache-dir \
+    requests==2.31.0 \
+    numpy==1.24.3 \
+    scipy==1.11.4
 
-# Copy rootfs
-COPY rootfs /
+# Create logs directory
+RUN mkdir -p /app/logs
 
-# Make service scripts executable
-RUN chmod a+x /etc/services.d/silo_prediction/run \
-    && chmod a+x /etc/services.d/silo_prediction/finish
+# Copy application
+COPY silo_prediction.py /app/
+COPY run.sh /run.sh
+
+RUN chmod +x /run.sh
+
+CMD ["/run.sh"]

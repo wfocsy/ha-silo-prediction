@@ -1,5 +1,0 @@
-#!/usr/bin/with-contenv bashio
-
-bashio::log.info "Starting Silo Prediction service v2.0..."
-
-exec python3 /app/app.py

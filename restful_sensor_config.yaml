@@ -1,0 +1,38 @@
+# RESTful Sensor Configuration for Silo Predictions
+# Add this to your Home Assistant configuration.yaml or include it via:
+# sensor: !include restful_sensor_config.yaml
+
+sensor:
+  # CFM 3 Hall Silo Empty Prediction
+  - platform: rest
+    name: "CFM 3 Hall Silo Empty Prediction"
+    unique_id: cfm_3_hall_silo_empty_prediction
+    resource: "http://localhost:5001/api/silo/CFM%203%20Hall%20Silo/prediction"
+    scan_interval: 3600  # Update every hour (3600 seconds)
+    device_class: timestamp
+    value_template: "{{ value_json.prediction.empty_datetime if value_json.prediction else 'unknown' }}"
+    json_attributes_path: "$.prediction"
+    json_attributes:
+      - current_weight
+      - consumption_rate_kg_day
+      - prediction_accuracy
+      - data_points_used
+      - method
+      - days_remaining
+
+  # CFM 1 Hall Silo (Bosche) Empty Prediction
+  - platform: rest
+    name: "CFM 1 Hall Silo Empty Prediction"
+    unique_id: cfm_1_hall_silo_empty_prediction
+    resource: "http://localhost:5001/api/silo/CFM%201%20Hall%20Silo%20(Bosche)/prediction"
+    scan_interval: 3600  # Update every hour
+    device_class: timestamp
+    value_template: "{{ value_json.prediction.empty_datetime if value_json.prediction else 'unknown' }}"
+    json_attributes_path: "$.prediction"
+    json_attributes:
+      - current_weight
+      - consumption_rate_kg_day
+      - prediction_accuracy
+      - data_points_used
+      - method
+      - days_remaining
