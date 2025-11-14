@@ -1,5 +1,5 @@
 name: Silo Prediction Add-on
-version: "2.0.0"
+version: "2.0.1"
 slug: silo_prediction_addon
 description: Advanced silo prediction with multi-silo support and refill detection
 url: "https://github.com/wfocsy/ha-silo-prediction"
@@ -24,6 +24,7 @@ ports_description:
 host_network: true
 options:
   log_level: info
+  homeassistant_token: ""
   database:
     host: core-mariadb
     port: 3306
@@ -45,6 +46,7 @@ options:
     refill_detection_threshold: 8000
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
+  homeassistant_token: str?
   database:
     host: str
     port: port

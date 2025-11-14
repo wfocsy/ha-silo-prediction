@@ -213,9 +213,16 @@ class SiloPredictionService:
     def update_home_assistant_entity(self, silo_config, prediction):
         """Update Home Assistant entity with prediction"""
         try:
+            # Try SUPERVISOR_TOKEN first, then fallback to config
+            token = os.environ.get('SUPERVISOR_TOKEN') or self.config.get('homeassistant_token', '')
+
+            if not token:
+                logger.error("No Home Assistant token available! Set homeassistant_token in config or ensure SUPERVISOR_TOKEN is set.")
+                return
+
             ha_url = "http://supervisor/core/api"
             headers = {
-                "Authorization": f"Bearer {os.environ.get('SUPERVISOR_TOKEN', '')}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"
             }
             
