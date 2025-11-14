@@ -48,34 +48,46 @@ class SiloPredictionService:
         connection = self.get_db_connection()
         if not connection:
             return []
-        
+
         try:
             with connection.cursor() as cursor:
-                # Get data from states table with hourly sampling
+                # Először debug: hány sora van összesen?
+                debug_query = "SELECT COUNT(*) as total FROM states WHERE entity_id = %s"
+                cursor.execute(debug_query, (entity_id,))
+                total_count = cursor.fetchone()
+                logger.info(f"Total rows for {entity_id}: {total_count}")
+
+                # Egyszerűsített query - csak az alapokat kérjük le
                 query = """
-                SELECT 
-                    DATE_FORMAT(last_changed, '%%Y-%%m-%%d %%H:00:00') as hour,
-                    AVG(CAST(state AS DECIMAL(10,2))) as avg_weight,
+                SELECT
+                    state,
                     last_changed
-                FROM states 
-                WHERE entity_id = %s 
+                FROM states
+                WHERE entity_id = %s
                     AND last_changed >= DATE_SUB(NOW(), INTERVAL %s DAY)
-                    AND state REGEXP '^[0-9]+\.?[0-9]*$'
-                    AND CAST(state AS DECIMAL(10,2)) > 0
-                GROUP BY DATE_FORMAT(last_changed, '%%Y-%%m-%%d %%H:00:00')
-                ORDER BY last_changed
+                ORDER BY last_changed ASC
                 """
                 cursor.execute(query, (entity_id, days))
                 results = cursor.fetchall()
-                
-                # Convert to list of tuples (datetime, weight)
+
+                logger.info(f"Raw query returned {len(results)} rows for {entity_id}")
+
+                # Convert to list of tuples (datetime, weight) with filtering in Python
                 data = []
                 for row in results:
-                    dt = datetime.strptime(row['hour'], '%Y-%m-%d %H:%M:%S')
-                    weight = float(row['avg_weight'])
-                    data.append((dt, weight))
-                
-                logger.info(f"Retrieved {len(data)} data points for {entity_id}")
+                    try:
+                        # Try to convert state to float
+                        weight = float(row['state'])
+                        if weight > 0:  # Only positive weights
+                            dt = row['last_changed']
+                            if isinstance(dt, str):
+                                dt = datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
+                            data.append((dt, weight))
+                    except (ValueError, TypeError) as e:
+                        # Skip non-numeric states
+                        continue
+
+                logger.info(f"Retrieved {len(data)} valid data points for {entity_id}")
                 return data
                 
         except Exception as e:
