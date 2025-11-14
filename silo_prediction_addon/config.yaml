@@ -1,5 +1,5 @@
 name: Silo Prediction Add-on
-version: "3.0.0"
+version: "3.0.1"
 slug: silo_prediction_addon
 description: Advanced silo prediction with multi-silo support and refill detection
 url: "https://github.com/wfocsy/ha-silo-prediction"
