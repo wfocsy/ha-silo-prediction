@@ -25,4 +25,3 @@ schema:
   max_capacity: int(1000,50000)
   prediction_days: int(1,30)
   update_interval: int(300,7200)
-image: "ghcr.io/{arch}/addon-silo-prediction"
