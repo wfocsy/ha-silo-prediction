@@ -278,18 +278,22 @@ class SiloPredictionAddon:
             logger.warning("❌ Nincs előrejelzési adat a szenzor frissítéshez")
             return
 
+        # Frissítjük a fő szenzort (dátum)
+        self._update_date_sensor(prediction_data)
+
+        # Frissítjük a hátralévő idő szenzort
+        self._update_time_remaining_sensor(prediction_data)
+
+    def _update_date_sensor(self, prediction_data: Dict):
+        """Dátum szenzor frissítése (mikor lesz 0 kg)"""
         sensor_entity_id = f"sensor.{self.sensor_name.lower().replace(' ', '_')}"
 
-        # A state értéke: ha van prediction_date, akkor azt használjuk (timestamp formátumban)
-        # Különben a status értékét
         prediction_date = prediction_data.get('prediction_date')
         status = prediction_data.get('status', 'unknown')
 
         if prediction_date:
-            # ISO formátumú dátumot használunk state-ként
             state = prediction_date
         else:
-            # Ha nincs dátum, a status-t használjuk
             state = status
 
         attributes = {
@@ -304,7 +308,42 @@ class SiloPredictionAddon:
             'icon': 'mdi:silo'
         }
 
-        url = f"{self.ha_url}/api/states/{sensor_entity_id}"
+        self._post_sensor(sensor_entity_id, state, attributes)
+
+    def _update_time_remaining_sensor(self, prediction_data: Dict):
+        """Hátralévő idő szenzor frissítése (X nap Y óra formátum)"""
+        time_sensor_entity_id = f"sensor.{self.sensor_name.lower().replace(' ', '_')}_time_remaining"
+
+        days_until = prediction_data.get('days_until_empty')
+        status = prediction_data.get('status', 'unknown')
+
+        if days_until is not None and days_until >= 0:
+            # Nap és óra számítása
+            days = int(days_until)
+            hours = int((days_until - days) * 24)
+
+            # Formázott string
+            if days > 0:
+                state = f"{days} nap {hours} óra"
+            else:
+                state = f"{hours} óra"
+        else:
+            state = status
+
+        attributes = {
+            'days': int(days_until) if days_until is not None else None,
+            'hours': int((days_until - int(days_until)) * 24) if days_until is not None else None,
+            'total_hours': round(days_until * 24, 1) if days_until is not None else None,
+            'status': status,
+            'friendly_name': f"{self.sensor_name} - Hátralévő Idő",
+            'icon': 'mdi:timer-sand'
+        }
+
+        self._post_sensor(time_sensor_entity_id, state, attributes)
+
+    def _post_sensor(self, entity_id: str, state: str, attributes: Dict):
+        """Közös metódus szenzor adatok POST-olásához"""
+        url = f"{self.ha_url}/api/states/{entity_id}"
         payload = {
             'state': state,
             'attributes': attributes
@@ -315,9 +354,9 @@ class SiloPredictionAddon:
             logger.debug(f"Payload: {payload}")
             response = requests.post(url, headers=self.headers, json=payload, timeout=10)
             response.raise_for_status()
-            logger.info(f"✅ Szenzor frissítve: {sensor_entity_id} = {state} nap")
+            logger.info(f"✅ Szenzor frissítve: {entity_id} = {state}")
         except requests.RequestException as e:
-            logger.error(f"❌ Szenzor frissítési hiba: {e}")
+            logger.error(f"❌ Szenzor frissítési hiba ({entity_id}): {e}")
             if hasattr(e.response, 'text'):
                 logger.error(f"Válasz: {e.response.text}")
 
