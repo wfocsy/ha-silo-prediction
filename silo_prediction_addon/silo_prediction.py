@@ -44,6 +44,12 @@ class SiloPredictionAddon:
         logger.info(f"Home Assistant URL: {self.ha_url}")
         logger.info(f"Entity ID: {self.entity_id}")
 
+        # Debug: Check if token is available
+        if not self.ha_token:
+            logger.error("❌ SUPERVISOR_TOKEN vagy HA_TOKEN nincs beállítva!")
+        else:
+            logger.info(f"✅ Token hossza: {len(self.ha_token)} karakter")
+
     def get_historical_data(self, days: int = 10) -> List[Tuple[datetime, float]]:
         """Történeti adatok lekérése a Home Assistant API-ból"""
         end_time = datetime.now()

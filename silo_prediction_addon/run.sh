@@ -16,11 +16,19 @@ export MAX_CAPACITY="$MAX_CAPACITY"
 export PREDICTION_DAYS="$PREDICTION_DAYS"
 export UPDATE_INTERVAL="$UPDATE_INTERVAL"
 export HA_URL="http://supervisor/core"
-export HA_TOKEN="$SUPERVISOR_TOKEN"
+
+# The SUPERVISOR_TOKEN is automatically available in the environment
+# We just need to export it if it exists
+if [ -n "$SUPERVISOR_TOKEN" ]; then
+    export HA_TOKEN="$SUPERVISOR_TOKEN"
+    bashio::log.info "Token available (${#SUPERVISOR_TOKEN} chars)"
+else
+    bashio::log.error "SUPERVISOR_TOKEN not found!"
+fi
 
 bashio::log.info "Starting Silo Prediction Add-on..."
 bashio::log.info "Entity ID: $ENTITY_ID"
 bashio::log.info "Sensor Name: $SENSOR_NAME"
 
 # Start the Python service
-python3 /app/silo_prediction.py
+exec python3 /app/silo_prediction.py
