@@ -1,5 +1,5 @@
 name: Silo Prediction Add-on
-version: "1.0.5"
+version: "1.0.6"
 slug: silo_prediction_addon
 description: Silo 0kg predikció REST API
 arch:

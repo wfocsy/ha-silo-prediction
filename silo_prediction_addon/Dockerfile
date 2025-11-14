@@ -7,10 +7,10 @@ RUN \
     python3 \
     py3-pip \
     py3-numpy \
-    py3-pandas && \
+    py3-pandas \
+    py3-scikit-learn && \
   pip3 install --break-system-packages --no-cache-dir \
     flask \
-    scikit-learn \
     mysql-connector-python
 
 # Set working directory
