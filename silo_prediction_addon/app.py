@@ -349,6 +349,10 @@ class SiloPredictionService:
             # Update entity state DIRECTLY in database
             entity_id = silo_config['prediction_entity']
 
+            # DEBUG: Log what we're trying to insert
+            logger.info(f"DEBUG - entity_id: '{entity_id}' (length: {len(entity_id)})")
+            logger.info(f"DEBUG - state: '{state}' (length: {len(state)})")
+
             try:
                 with connection.cursor() as cursor:
                     # Convert attributes to JSON
@@ -371,6 +375,7 @@ class SiloPredictionService:
                         WHERE entity_id = %s
                         AND last_updated = (SELECT MAX(last_updated) FROM (SELECT * FROM states) AS s WHERE entity_id = %s)
                         """
+                        logger.info(f"DEBUG - Executing UPDATE for {entity_id}")
                         cursor.execute(update_query, (state, attributes_json, entity_id, entity_id))
                     else:
                         # INSERT new entity
@@ -378,6 +383,8 @@ class SiloPredictionService:
                         INSERT INTO states (entity_id, state, attributes, last_changed, last_updated)
                         VALUES (%s, %s, %s, NOW(), NOW())
                         """
+                        logger.info(f"DEBUG - Executing INSERT for {entity_id}")
+                        logger.info(f"DEBUG - INSERT params: entity_id='{entity_id}', state='{state}', attributes_len={len(attributes_json)}")
                         cursor.execute(insert_query, (entity_id, state, attributes_json))
 
                     connection.commit()
