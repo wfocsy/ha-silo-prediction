@@ -1,0 +1,7 @@
+{
+  "name": "Silo Prediction",
+  "content_in_root": false,
+  "filename": "silo_prediction",
+  "render_readme": true,
+  "homeassistant": "2023.1.0"
+}
