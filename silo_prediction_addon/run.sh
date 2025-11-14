@@ -18,16 +18,30 @@ else
 fi
 
 # Export silos configuration as JSON
-# This uses bashio to read the entire silos array and convert to JSON
-SILOS_JSON=$(bashio::config 'silos')
-export SILOS_CONFIG="$SILOS_JSON"
-
+# Bashio returns each array element on a separate line, so we need to construct valid JSON
 bashio::log.info "Starting Silo Prediction Add-on..."
 bashio::log.info "Prediction days: $PREDICTION_DAYS"
 bashio::log.info "Update interval: $UPDATE_INTERVAL seconds"
 
-# Count silos
-SILO_COUNT=$(echo "$SILOS_JSON" | jq '. | length')
+# Build JSON array from silos config
+SILOS_JSON="["
+SILO_COUNT=0
+for entity_id in $(bashio::config 'silos|keys'); do
+    if [ $SILO_COUNT -gt 0 ]; then
+        SILOS_JSON="${SILOS_JSON},"
+    fi
+
+    ENTITY=$(bashio::config "silos[${entity_id}].entity_id")
+    SENSOR_NAME=$(bashio::config "silos[${entity_id}].sensor_name")
+    REFILL=$(bashio::config "silos[${entity_id}].refill_threshold")
+    MAX_CAP=$(bashio::config "silos[${entity_id}].max_capacity")
+
+    SILOS_JSON="${SILOS_JSON}{\"entity_id\":\"${ENTITY}\",\"sensor_name\":\"${SENSOR_NAME}\",\"refill_threshold\":${REFILL},\"max_capacity\":${MAX_CAP}}"
+    SILO_COUNT=$((SILO_COUNT + 1))
+done
+SILOS_JSON="${SILOS_JSON}]"
+
+export SILOS_CONFIG="$SILOS_JSON"
 bashio::log.info "Configured silos: $SILO_COUNT"
 
 # Start the Python service
