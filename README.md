@@ -1,4 +1,59 @@
-## Telepítés és használat Home Assistant OS alatt
+# Silo Prediction - Home Assistant Integráció
+
+Ez a projekt két módon használható:
+1. **Custom Component** (HACS) - Ajánlott, közvetlenül DB-ből dolgozik
+2. **Add-on** (REST API) - Alternatív megoldás
+
+---
+
+## 1. Telepítés Custom Component-ként (Ajánlott)
+
+### Előnyök:
+- ✅ Közvetlenül a MariaDB recorder-ből dolgozik
+- ✅ Automatikusan létrehozza a `sensor.silo_prediction_0kg_becsu_ido` entitást
+- ✅ Nincs szükség külön REST API-ra vagy RESTful sensor-ra
+- ✅ 12 óránként automatikusan frissít
+
+### Telepítési lépések:
+
+#### Via HACS (Ajánlott):
+1. HACS → Integrations → 3 pont → Custom repositories
+2. Repository: `https://github.com/wfocsy/ha-silo-prediction`
+3. Category: Integration
+4. Keress rá: "Silo Prediction"
+5. Telepítés → Restart Home Assistant
+
+#### Manuális telepítés:
+1. Másold a `custom_components/silo_prediction` mappát a Home Assistant `config/custom_components/` könyvtárába
+2. Restart Home Assistant
+
+### Konfiguráció:
+
+Add hozzá a `configuration.yaml`-hoz:
+
+```yaml
+silo_prediction:
+```
+
+Mentés után **restart** és a sensor automatikusan megjelenik:
+- **Entitás**: `sensor.silo_0kg_becsult_ido`
+- **Device Class**: Timestamp
+- **Frissítés**: 12 óránként
+
+### Adatbázis konfiguráció:
+
+A sensor hardkódoltan használja ezeket az értékeket (később konfigurálhatóvá tehető):
+- **Entity ID**: `sensor.cfm_3_hall_modbus_1_lp7516_merleg_suly`
+- **DB Host**: `localhost` (vagy `core-mariadb`)
+- **DB User**: `homeassistant`
+- **DB Password**: `Pozsi1981`
+- **DB Name**: `homeassistant`
+
+---
+
+## 2. Telepítés Add-on-ként (Alternatív)
+
+### Használd ezt, ha:
 
 1. **Add-on repó hozzáadása**
    - Home Assistantban menj a **Beállítások → Kiegészítők → Kiegészítő tárolók** menüpontra.
