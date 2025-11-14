@@ -313,24 +313,12 @@ class SiloPredictionService:
             return None
     
     def update_home_assistant_entity(self, silo_config, prediction):
-        """Update Home Assistant entity with prediction"""
+        """Update Home Assistant entity with prediction - DIRECTLY via database"""
         try:
-            # Try SUPERVISOR_TOKEN first, then fallback to config
-            supervisor_token = os.environ.get('SUPERVISOR_TOKEN')
-            config_token = self.config.get('homeassistant_token', '')
-            token = supervisor_token or config_token
-
-            logger.info(f"Token sources - SUPERVISOR_TOKEN: {'SET' if supervisor_token else 'NOT SET'}, config token: {'SET' if config_token else 'NOT SET'}, using: {'supervisor' if supervisor_token else 'config' if config_token else 'NONE'}")
-
-            if not token:
-                logger.error("No Home Assistant token available! Set homeassistant_token in config or ensure SUPERVISOR_TOKEN is set.")
+            connection = self.get_db_connection()
+            if not connection:
+                logger.error("No database connection for entity update!")
                 return False
-
-            ha_url = "http://supervisor/core/api"
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            }
             
             if not prediction:
                 state = "unknown"
@@ -358,30 +346,49 @@ class SiloPredictionService:
                     "status": "predicted"
                 }
             
-            # Update entity state
+            # Update entity state DIRECTLY in database
             entity_id = silo_config['prediction_entity']
-            payload = {
-                "state": state,
-                "attributes": attributes
-            }
-            
-            logger.info(f"Attempting to update entity {entity_id} at {ha_url}/states/{entity_id}")
-            logger.debug(f"Payload: {payload}")
 
-            response = requests.post(f"{ha_url}/states/{entity_id}",
-                                   headers=headers, json=payload)
+            try:
+                with connection.cursor() as cursor:
+                    # Convert attributes to JSON
+                    import json
+                    attributes_json = json.dumps(attributes)
 
-            logger.info(f"Response status: {response.status_code}, body: {response.text[:500]}")
+                    # Első: Ellenőrizzük hogy létezik-e már az entitás
+                    check_query = "SELECT entity_id FROM states WHERE entity_id = %s ORDER BY last_updated DESC LIMIT 1"
+                    cursor.execute(check_query, (entity_id,))
+                    exists = cursor.fetchone()
 
-            if response.status_code == 200 or response.status_code == 201:
-                logger.info(f"Updated entity {entity_id} successfully")
-                return True
-            else:
-                logger.error(f"Failed to update entity {entity_id}: {response.status_code}, response: {response.text}")
-                return False
-                
+                    if exists:
+                        # UPDATE existing entity
+                        update_query = """
+                        UPDATE states
+                        SET state = %s,
+                            attributes = %s,
+                            last_changed = NOW(),
+                            last_updated = NOW()
+                        WHERE entity_id = %s
+                        AND last_updated = (SELECT MAX(last_updated) FROM (SELECT * FROM states) AS s WHERE entity_id = %s)
+                        """
+                        cursor.execute(update_query, (state, attributes_json, entity_id, entity_id))
+                    else:
+                        # INSERT new entity
+                        insert_query = """
+                        INSERT INTO states (entity_id, state, attributes, last_changed, last_updated)
+                        VALUES (%s, %s, %s, NOW(), NOW())
+                        """
+                        cursor.execute(insert_query, (entity_id, state, attributes_json))
+
+                    connection.commit()
+                    logger.info(f"Updated entity {entity_id} successfully in database (state: {state[:50]})")
+                    return True
+
+            finally:
+                connection.close()
+
         except Exception as e:
-            logger.error(f"Error updating Home Assistant entity: {e}")
+            logger.error(f"Error updating Home Assistant entity: {e}", exc_info=True)
             return False
     
     def process_silo(self, silo_config):
