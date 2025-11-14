@@ -72,6 +72,42 @@ class SiloPredictionService:
                     stats_count = cursor.fetchone()
                     logger.info(f"Found in statistics_meta: {stats_count}")
 
+                    # Ha megtaláltuk a statistics_meta-ban, használjuk azt!
+                    if stats_count['total'] > 0:
+                        logger.info(f"Using statistics table instead of states for {entity_id}")
+
+                        # Statistics query
+                        stats_data_query = """
+                        SELECT
+                            s.start,
+                            s.mean as state
+                        FROM statistics s
+                        JOIN statistics_meta sm ON s.metadata_id = sm.id
+                        WHERE sm.statistic_id = %s
+                            AND s.start >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                        ORDER BY s.start ASC
+                        """
+                        cursor.execute(stats_data_query, (entity_id, days))
+                        results = cursor.fetchall()
+
+                        logger.info(f"Statistics query returned {len(results)} rows for {entity_id}")
+
+                        # Convert to list of tuples (datetime, weight)
+                        data = []
+                        for row in results:
+                            try:
+                                weight = float(row['state'])
+                                if weight > 0:
+                                    dt = row['start']
+                                    if isinstance(dt, str):
+                                        dt = datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
+                                    data.append((dt, weight))
+                            except (ValueError, TypeError):
+                                continue
+
+                        logger.info(f"Retrieved {len(data)} valid data points from statistics for {entity_id}")
+                        return data
+
                     return []
 
                 # Egyszerűsített query - csak az alapokat kérjük le
