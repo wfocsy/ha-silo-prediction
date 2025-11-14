@@ -134,13 +134,16 @@ class SiloPredictionAddon:
         return hourly_data
 
     def detect_refills(self, data: List[Tuple[datetime, float]]) -> List[Tuple[datetime, float]]:
-        """Feltöltések detektálása és eltávolítása"""
+        """
+        Feltöltések detektálása és csak az utolsó feltöltés UTÁNI adatok megtartása.
+        Ez azért fontos, mert csak az utolsó feltöltés után tudjuk pontosan előrejelezni az ürülést.
+        """
         if len(data) < 2:
             return data
 
-        cleaned_data = [data[0]]
-        refill_count = 0
+        last_refill_index = -1
 
+        # Keressük meg az utolsó feltöltés indexét
         for i in range(1, len(data)):
             prev_weight = data[i-1][1]
             curr_weight = data[i][1]
@@ -150,13 +153,16 @@ class SiloPredictionAddon:
             if weight_change > 8000:
                 logger.info(f"🔄 Feltöltés detektálva: {data[i-1][0]} -> {data[i][0]}, "
                            f"Súlyváltozás: +{weight_change:.0f}kg")
-                refill_count += 1
-                # Kihagyjuk a feltöltés utáni első adatpontot
-                continue
+                last_refill_index = i
 
-            cleaned_data.append(data[i])
+        # Ha volt feltöltés, csak az utolsó feltöltés utáni adatokat tartjuk meg
+        if last_refill_index >= 0:
+            cleaned_data = data[last_refill_index:]
+            logger.info(f"✅ Utolsó feltöltés után: {len(cleaned_data)} adatpont ({data[last_refill_index][0]})")
+        else:
+            cleaned_data = data
+            logger.info(f"✅ Nem volt feltöltés, {len(cleaned_data)} adatpont használva")
 
-        logger.info(f"✅ {refill_count} feltöltés eltávolítva, {len(cleaned_data)} adatpont maradt")
         return cleaned_data
 
     def calculate_prediction(self, data: List[Tuple[datetime, float]]) -> Optional[Dict]:
@@ -200,34 +206,56 @@ class SiloPredictionAddon:
                 'status': 'no_trend'
             }
 
+        # Ellenőrizzük a trend irányát
+        if slope >= -0.1:
+            # A siló nem ürül (töltődik vagy stabil)
+            logger.info("⚠️ A siló nem ürül (pozitív vagy nulla trend)")
+            return {
+                'prediction_date': None,
+                'days_until_empty': None,
+                'slope': slope,
+                'r_squared': r_squared,
+                'current_weight': current_weight,
+                'threshold': 0,
+                'status': 'filling' if slope > 0 else 'stable'
+            }
+
+        # Negatív slope - a siló ürül
         # Hány óra múlva lesz 0 kg?
         hours_to_zero = -intercept / slope
-
-        # Számítsuk ki a dátumot és az eltelt időt
         hours_from_now = hours_to_zero - current_hours
-        prediction_datetime = datetime.now() + timedelta(hours=hours_from_now)
+
+        # Ellenőrizzük, hogy értelmes-e az előrejelzés
+        if hours_from_now < 0:
+            logger.warning("⚠️ A számítás szerint már kiürült volna (hibás adat)")
+            return {
+                'prediction_date': None,
+                'days_until_empty': None,
+                'slope': slope,
+                'r_squared': r_squared,
+                'current_weight': current_weight,
+                'threshold': 0,
+                'status': 'error'
+            }
+
         days_until = hours_from_now / 24
 
-        # Állapot meghatározása
-        if slope > 0:
-            # Töltődik
-            status = 'filling'
-            logger.info("⚠️ A siló töltődik")
-        elif hours_from_now < 0:
-            # A 0 már a múltban lenne
-            status = 'already_empty'
-            logger.info("⚠️ A számítás szerint már kiürült volna")
-        elif days_until > 365:
-            # Túl távoli jövő
-            status = 'too_far'
+        if days_until > 365:
             logger.info(f"⚠️ Túl távoli előrejelzés: {days_until:.0f} nap")
-        else:
-            # Normális ürülés
-            status = 'emptying'
-            logger.info(f"✅ Ürülés folyamatban")
+            return {
+                'prediction_date': None,
+                'days_until_empty': None,
+                'slope': slope,
+                'r_squared': r_squared,
+                'current_weight': current_weight,
+                'threshold': 0,
+                'status': 'too_far'
+            }
 
+        # Érvényes ürülési előrejelzés
+        prediction_datetime = datetime.now() + timedelta(hours=hours_from_now)
         logger.info(f"📅 0 kg előrejelzés: {prediction_datetime.strftime('%Y-%m-%d %H:%M')}")
-        logger.info(f"⏱️ Idő a 0 kg-ig: {days_until:.1f} nap")
+        logger.info(f"⏱️ Hátralévő idő: {days_until:.1f} nap")
 
         return {
             'prediction_date': prediction_datetime.isoformat(),
@@ -236,7 +264,7 @@ class SiloPredictionAddon:
             'r_squared': round(r_squared, 4),
             'current_weight': round(current_weight, 0),
             'threshold': 0,
-            'status': status
+            'status': 'emptying'
         }
 
     def update_sensor(self, prediction_data: Dict):
