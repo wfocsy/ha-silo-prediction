@@ -10,20 +10,30 @@ import time
 import logging
 import requests
 import numpy as np
+import pytz
 from datetime import datetime, timedelta
 from typing import List, Tuple, Dict, Optional
 from scipy import stats
 
-# Logging beállítása
+# Logging beállítása időbélyeggel
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.FileHandler('/app/logs/silo_prediction.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Timezone beállítása - Home Assistant timezone-ja
+try:
+    LOCAL_TZ = pytz.timezone('Europe/Budapest')
+    logger.info(f"✅ Timezone beállítva: Europe/Budapest")
+except Exception as e:
+    LOCAL_TZ = pytz.UTC
+    logger.warning(f"⚠️ Europe/Budapest timezone nem elérhető ({e}), UTC-t használunk")
 
 
 class SiloPredictor:
@@ -48,10 +58,11 @@ class SiloPredictor:
 
     def get_historical_data(self) -> List[Tuple[datetime, float]]:
         """Történeti adatok lekérése a Home Assistant API-ból"""
-        end_time = datetime.now()
+        # Lokális időben számolunk
+        end_time = datetime.now(LOCAL_TZ)
         start_time = end_time - timedelta(days=self.prediction_days)
 
-        logger.info(f"📊 [{self.sensor_name}] Adatok lekérése: {start_time} - {end_time}")
+        logger.info(f"📊 [{self.sensor_name}] Adatok lekérése: {start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')}")
 
         url = f"{self.ha_url}/api/history/period/{start_time.isoformat()}"
         params = {
@@ -69,12 +80,14 @@ class SiloPredictor:
                 logger.warning(f"❌ [{self.sensor_name}] Nincs adat a válaszban")
                 return []
 
-            # Adatok feldolgozása
+            # Adatok feldolgozása - UTC-ből lokális időre konvertálás
             processed_data = []
             for entry in data[0]:
                 try:
-                    timestamp = datetime.fromisoformat(entry['last_changed'].replace('Z', '+00:00'))
-                    timestamp = timestamp.replace(tzinfo=None)
+                    # HA UTC-ben küldi, konvertáljuk lokálisra
+                    timestamp_utc = datetime.fromisoformat(entry['last_changed'].replace('Z', '+00:00'))
+                    # Konvertálás lokális időzónára
+                    timestamp = timestamp_utc.astimezone(LOCAL_TZ)
 
                     state = entry.get('state', '0')
                     if state in ['unknown', 'unavailable', 'null', None]:
@@ -225,7 +238,9 @@ class SiloPredictor:
                 'status': 'too_far'
             }
 
-        prediction_datetime = datetime.now() + timedelta(hours=hours_from_now)
+        # Előrejelzés lokális időben
+        prediction_datetime = datetime.now(LOCAL_TZ) + timedelta(hours=hours_from_now)
+
         formatted_date = prediction_datetime.strftime('%Y-%m-%d %H:%M')
 
         logger.info(f"📅 [{self.sensor_name}] 0 kg előrejelzés: {formatted_date}")
@@ -249,6 +264,7 @@ class SiloPredictor:
 
         self._update_date_sensor(prediction_data)
         self._update_time_remaining_sensor(prediction_data)
+        self._update_last_updated_sensor()
 
     def _update_date_sensor(self, prediction_data: Dict):
         """Dátum szenzor frissítése (mikor lesz 0 kg)"""
@@ -301,6 +317,24 @@ class SiloPredictor:
         }
 
         self._post_sensor(time_sensor_entity_id, state, attributes)
+
+    def _update_last_updated_sensor(self):
+        """Utolsó frissítés időpontja szenzor"""
+        last_updated_entity_id = f"sensor.{self.sensor_name.lower().replace(' ', '_')}_last_updated"
+
+        # Aktuális idő lokális időzónában
+        now = datetime.now(LOCAL_TZ)
+
+        # Formázott időbélyeg
+        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+
+        attributes = {
+            'timestamp': timestamp,
+            'friendly_name': f"{self.sensor_name} - Utolsó Frissítés",
+            'icon': 'mdi:clock-check-outline'
+        }
+
+        self._post_sensor(last_updated_entity_id, timestamp, attributes)
 
     def _post_sensor(self, entity_id: str, state: str, attributes: Dict):
         """Közös metódus szenzor adatok POST-olásához"""

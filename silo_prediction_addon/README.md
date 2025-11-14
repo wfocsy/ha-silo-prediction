@@ -61,9 +61,10 @@ update_interval: 3600      # Frissítési intervallum másodpercben
 
 ## Létrehozott Szenzorok
 
-Minden silohoz 2 szenzor:
+Minden silohoz 3 szenzor:
 - `sensor.{sensor_name}` - Dátum (pl. "2025-11-21 14:30")
 - `sensor.{sensor_name}_time_remaining` - Idő (pl. "5 nap 14 óra")
+- `sensor.{sensor_name}_last_updated` - Utolsó frissítés időpontja (pl. "2025-11-14 23:15:32")
 
 ## Logok
 

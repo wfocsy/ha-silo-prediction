@@ -11,7 +11,8 @@ RUN apk add --no-cache \
 # Install Python packages
 RUN pip3 install --break-system-packages --no-cache-dir \
     requests==2.31.0 \
-    scipy==1.11.4
+    scipy==1.11.4 \
+    pytz==2024.1
 
 # Create app and logs directory
 RUN mkdir -p /app/logs
