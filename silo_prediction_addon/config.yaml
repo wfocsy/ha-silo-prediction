@@ -1,7 +1,7 @@
 name: Silo Prediction Add-on
-version: "1.1.1"
+version: "2.0.0"
 slug: silo_prediction_addon
-description: Silo 0kg predikció REST API
+description: Advanced silo prediction with multi-silo support and refill detection
 url: "https://github.com/wfocsy/ha-silo-prediction"
 arch:
   - armhf
@@ -12,9 +12,55 @@ arch:
 init: false
 startup: services
 boot: auto
-webui: "http://[HOST]:[PORT:5000]/predict"
+webui: "http://[HOST]:[PORT:5000]"
+ingress: true
+ingress_port: 0
+panel_icon: "mdi:silo"
+panel_title: "Silo Prediction"
 ports:
   5000/tcp: 5000
+ports_description:
+  5000/tcp: "Web interface and API port"
 host_network: true
-options: {}
-schema: {}
+options:
+  log_level: info
+  database:
+    host: core-mariadb
+    port: 3306
+    username: homeassistant
+    password: Pozsi1981
+    database: homeassistant
+  silos:
+    - name: CFM 3 Hall Silo
+      entity_id: sensor.cfm_3_hall_modbus_1_lp7516_merleg_suly
+      prediction_entity: sensor.cfm_3_hall_silo_empty_prediction
+      max_capacity: 20000
+      refill_threshold: 10000
+      refill_time_window: 45
+      area: cfm_3_hall
+  prediction:
+    history_days: 10
+    min_data_points: 24
+    update_interval: 3600
+    refill_detection_threshold: 8000
+schema:
+  log_level: list(trace|debug|info|notice|warning|error|fatal)?
+  database:
+    host: str
+    port: port
+    username: str
+    password: password
+    database: str
+  silos:
+    - name: str
+      entity_id: str
+      prediction_entity: str
+      max_capacity: int(1,50000)
+      refill_threshold: int(1,50000)
+      refill_time_window: int(10,120)
+      area: str?
+  prediction:
+    history_days: int(1,30)
+    min_data_points: int(12,168)
+    update_interval: int(300,7200)
+    refill_detection_threshold: int(1000,20000)

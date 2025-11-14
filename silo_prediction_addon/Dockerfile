@@ -11,13 +11,16 @@ RUN \
     py3-scikit-learn && \
   pip3 install --break-system-packages --no-cache-dir \
     flask \
-    mysql-connector-python
+    pymysql \
+    scipy \
+    python-dateutil
 
 # Set working directory
 WORKDIR /app
 
 # Copy application files
-COPY prediction_service.py /app/prediction_service.py
+COPY app.py /app/app.py
+COPY requirements.txt /app/requirements.txt
 
 # Copy rootfs
 COPY rootfs /
