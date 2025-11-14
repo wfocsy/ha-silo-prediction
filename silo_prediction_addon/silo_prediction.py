@@ -234,7 +234,9 @@ class SiloPredictionAddon:
 
         sensor_entity_id = f"sensor.{self.sensor_name.lower().replace(' ', '_')}"
 
-        state = prediction_data.get('days_until_empty', 'unknown')
+        # Ha nincs days_until_empty (pl. stable state), használjunk 'unknown' értéket
+        days_until = prediction_data.get('days_until_empty')
+        state = days_until if days_until is not None else 'unknown'
 
         attributes = {
             'prediction_date': prediction_data.get('prediction_date'),
@@ -256,11 +258,15 @@ class SiloPredictionAddon:
         }
 
         try:
+            logger.debug(f"Szenzor frissítés URL: {url}")
+            logger.debug(f"Payload: {payload}")
             response = requests.post(url, headers=self.headers, json=payload, timeout=10)
             response.raise_for_status()
             logger.info(f"✅ Szenzor frissítve: {sensor_entity_id} = {state} nap")
         except requests.RequestException as e:
             logger.error(f"❌ Szenzor frissítési hiba: {e}")
+            if hasattr(e.response, 'text'):
+                logger.error(f"Válasz: {e.response.text}")
 
     def run(self):
         """Fő futási ciklus"""
