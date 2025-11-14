@@ -76,7 +76,29 @@ class SiloPredictionService:
                     if stats_count['total'] > 0:
                         logger.info(f"Using statistics table instead of states for {entity_id}")
 
-                        # Statistics query
+                        # DEBUG: Nézzük meg az összes statistics sort
+                        total_stats_query = """
+                        SELECT COUNT(*) as total
+                        FROM statistics s
+                        JOIN statistics_meta sm ON s.metadata_id = sm.id
+                        WHERE sm.statistic_id = %s
+                        """
+                        cursor.execute(total_stats_query, (entity_id,))
+                        total_stats = cursor.fetchone()
+                        logger.info(f"Total statistics rows for {entity_id}: {total_stats}")
+
+                        # DEBUG: Legfrissebb és legrégebbi dátum
+                        date_range_query = """
+                        SELECT MIN(s.start) as oldest, MAX(s.start) as newest
+                        FROM statistics s
+                        JOIN statistics_meta sm ON s.metadata_id = sm.id
+                        WHERE sm.statistic_id = %s
+                        """
+                        cursor.execute(date_range_query, (entity_id,))
+                        date_range = cursor.fetchone()
+                        logger.info(f"Statistics date range: {date_range}")
+
+                        # Statistics query - növeljük 30 napra
                         stats_data_query = """
                         SELECT
                             s.start,
@@ -84,10 +106,10 @@ class SiloPredictionService:
                         FROM statistics s
                         JOIN statistics_meta sm ON s.metadata_id = sm.id
                         WHERE sm.statistic_id = %s
-                            AND s.start >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                            AND s.start >= DATE_SUB(NOW(), INTERVAL 30 DAY)
                         ORDER BY s.start ASC
                         """
-                        cursor.execute(stats_data_query, (entity_id, days))
+                        cursor.execute(stats_data_query, (entity_id,))
                         results = cursor.fetchall()
 
                         logger.info(f"Statistics query returned {len(results)} rows for {entity_id}")
