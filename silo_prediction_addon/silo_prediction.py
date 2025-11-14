@@ -149,8 +149,9 @@ class SiloPredictionAddon:
             curr_weight = data[i][1]
             weight_change = curr_weight - prev_weight
 
-            # Ha a súly 8000kg-nál többel nőtt, az feltöltés
-            if weight_change > 8000:
+            # Ha a súly 3000kg-nál többel nőtt, az feltöltés
+            # (Óránkénti átlagolás után is detektálható legyen)
+            if weight_change > 3000:
                 logger.info(f"🔄 Feltöltés detektálva: {data[i-1][0]} -> {data[i][0]}, "
                            f"Súlyváltozás: +{weight_change:.0f}kg")
                 last_refill_index = i
