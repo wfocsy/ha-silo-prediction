@@ -8,7 +8,7 @@ RUN \
     py3-pip \
     py3-numpy \
     py3-pandas && \
-  pip3 install --no-cache-dir \
+  pip3 install --break-system-packages --no-cache-dir \
     flask \
     scikit-learn \
     mysql-connector-python
