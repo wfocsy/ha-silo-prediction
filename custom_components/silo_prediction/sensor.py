@@ -95,9 +95,22 @@ class SiloPredictionSensor(SensorEntity):
         self._state = None # A szenzor állapota
         self._extra_state_attributes = {} # Extra attribútumok
 
-        # Ütemezett frissítés beállítása
-        async_track_time_interval(hass, self.async_update, SCAN_INTERVAL)
+        # Ne itt hívjuk meg az async_track_time_interval-t,
+        # hanem az async_added_to_hass-ban
 
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+
+        # Ütemezett frissítés beállítása - MOST már biztonságos
+        async_track_time_interval(self._hass, self._async_update_wrapper, SCAN_INTERVAL)
+
+        # Első frissítés azonnal
+        await self.async_update()
+
+    async def _async_update_wrapper(self, now=None):
+        """Wrapper for async_update to work with async_track_time_interval."""
+        await self.async_update()
 
     @property
     def native_value(self):
@@ -195,14 +208,15 @@ class SiloPredictionSensor(SensorEntity):
             # Azért 30 nap, mert a polinom regresszióhoz kell elegendő múltbeli adat.
             start_date = (datetime.utcnow() - timedelta(days=30)).isoformat(timespec='seconds') + 'Z'
 
-            query = f"""
+            # BIZTONSÁGOS: parameterezett query SQL injection ellen
+            query = """
             SELECT state, last_changed
             FROM states
-            WHERE entity_id = '{self._monitored_entity_id}'
-            AND last_changed >= '{start_date}'
-            ORDER BY last_changed ASC;
+            WHERE entity_id = %s
+            AND last_changed >= %s
+            ORDER BY last_changed ASC
             """
-            cursor.execute(query)
+            cursor.execute(query, (self._monitored_entity_id, start_date))
             data = cursor.fetchall()
             _LOGGER.debug(f"Fetched {len(data)} rows from MariaDB.")
 

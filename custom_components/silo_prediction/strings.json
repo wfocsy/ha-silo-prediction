@@ -1,0 +1,11 @@
+{
+  "title": "Siló Kifogyás Előrejelzés",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Siló Előrejelzés Beállítása",
+        "description": "Add meg a beállításokat a siló kifogyás előrejelzéséhez"
+      }
+    }
+  }
+}
