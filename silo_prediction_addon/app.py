@@ -359,45 +359,69 @@ class SiloPredictionService:
                     import json
                     attributes_json = json.dumps(attributes)
 
-                    # DEBUG: Check states_meta table
-                    meta_query = "DESCRIBE states_meta"
-                    cursor.execute(meta_query)
-                    meta_schema = cursor.fetchall()
-                    logger.info(f"DEBUG - states_meta table schema: {meta_schema}")
-
-                    # Check if our entity exists in states_meta
-                    check_meta_query = "SELECT * FROM states_meta WHERE entity_id = %s"
+                    # Step 1: Get or create metadata_id for this entity
+                    check_meta_query = "SELECT metadata_id FROM states_meta WHERE entity_id = %s"
                     cursor.execute(check_meta_query, (entity_id,))
                     existing_meta = cursor.fetchone()
-                    logger.info(f"DEBUG - Existing metadata for {entity_id}: {existing_meta}")
 
-                    # Első: Ellenőrizzük hogy létezik-e már az entitás
-                    check_query = "SELECT entity_id FROM states WHERE entity_id = %s ORDER BY last_updated DESC LIMIT 1"
-                    cursor.execute(check_query, (entity_id,))
-                    exists = cursor.fetchone()
+                    if existing_meta:
+                        metadata_id = existing_meta['metadata_id']
+                        logger.info(f"Using existing metadata_id {metadata_id} for {entity_id}")
+                    else:
+                        # Insert into states_meta first
+                        insert_meta_query = "INSERT INTO states_meta (entity_id) VALUES (%s)"
+                        cursor.execute(insert_meta_query, (entity_id,))
+                        metadata_id = cursor.lastrowid
+                        logger.info(f"Created new metadata_id {metadata_id} for {entity_id}")
 
-                    if exists:
-                        # UPDATE existing entity
+                    # Step 2: Check if state already exists for this metadata_id
+                    check_state_query = "SELECT state_id FROM states WHERE metadata_id = %s ORDER BY last_updated_ts DESC LIMIT 1"
+                    cursor.execute(check_state_query, (metadata_id,))
+                    existing_state = cursor.fetchone()
+
+                    # Step 3: Get or create attributes_id
+                    # First check if identical attributes already exist
+                    import hashlib
+                    attrs_hash = hashlib.sha1(attributes_json.encode()).hexdigest()
+                    check_attrs_query = "SELECT attributes_id FROM state_attributes WHERE hash = %s AND shared_attrs = %s LIMIT 1"
+                    cursor.execute(check_attrs_query, (attrs_hash, attributes_json))
+                    existing_attrs = cursor.fetchone()
+
+                    if existing_attrs:
+                        attributes_id = existing_attrs['attributes_id']
+                        logger.info(f"Using existing attributes_id {attributes_id}")
+                    else:
+                        # Insert new attributes
+                        insert_attrs_query = "INSERT INTO state_attributes (hash, shared_attrs) VALUES (%s, %s)"
+                        cursor.execute(insert_attrs_query, (attrs_hash, attributes_json))
+                        attributes_id = cursor.lastrowid
+                        logger.info(f"Created new attributes_id {attributes_id}")
+
+                    # Step 4: Insert or update the state
+                    import time
+                    current_ts = time.time()
+
+                    if existing_state:
+                        # UPDATE existing state
                         update_query = """
                         UPDATE states
                         SET state = %s,
-                            attributes = %s,
-                            last_changed = NOW(),
-                            last_updated = NOW()
-                        WHERE entity_id = %s
-                        AND last_updated = (SELECT MAX(last_updated) FROM (SELECT * FROM states) AS s WHERE entity_id = %s)
+                            attributes_id = %s,
+                            last_changed_ts = %s,
+                            last_updated_ts = %s,
+                            last_reported_ts = %s
+                        WHERE state_id = %s
                         """
-                        logger.info(f"DEBUG - Executing UPDATE for {entity_id}")
-                        cursor.execute(update_query, (state, attributes_json, entity_id, entity_id))
+                        cursor.execute(update_query, (state, attributes_id, current_ts, current_ts, current_ts, existing_state['state_id']))
+                        logger.info(f"Updated existing state for {entity_id}")
                     else:
-                        # INSERT new entity
-                        insert_query = """
-                        INSERT INTO states (entity_id, state, attributes, last_changed, last_updated)
-                        VALUES (%s, %s, %s, NOW(), NOW())
+                        # INSERT new state
+                        insert_state_query = """
+                        INSERT INTO states (metadata_id, state, attributes_id, last_changed_ts, last_updated_ts, last_reported_ts)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         """
-                        logger.info(f"DEBUG - Executing INSERT for {entity_id}")
-                        logger.info(f"DEBUG - INSERT params: entity_id='{entity_id}', state='{state}', attributes_len={len(attributes_json)}")
-                        cursor.execute(insert_query, (entity_id, state, attributes_json))
+                        cursor.execute(insert_state_query, (metadata_id, state, attributes_id, current_ts, current_ts, current_ts))
+                        logger.info(f"Created new state for {entity_id}")
 
                     connection.commit()
                     logger.info(f"Updated entity {entity_id} successfully in database (state: {state[:50]})")
