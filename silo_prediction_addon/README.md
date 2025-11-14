@@ -20,11 +20,11 @@ A config felületen tetszőleges számú silót adhatsz hozzá:
 ```yaml
 silos:
   - entity_id: "sensor.cfm_3_hall_modbus_1_lp7516_merleg_suly"
-    sensor_name: "CFM 3 Hall Silo Empty Prediction"
+    sensor_name: "CFM 3 Hall Silo Prediction"
     refill_threshold: 1000
     max_capacity: 20000
   - entity_id: "sensor.cfm_1_hall_silo_scale_bosche_silo_merleg_suly"
-    sensor_name: "CFM 1 Hall Silo Empty Prediction"
+    sensor_name: "CFM 1 Hall Silo Prediction"
     refill_threshold: 1000
     max_capacity: 20000
 prediction_days: 10        # Hány nap adat alapján
