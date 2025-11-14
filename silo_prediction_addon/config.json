@@ -1,0 +1,16 @@
+{
+  "name": "Silo Prediction Add-on",
+  "version": "1.0.0",
+  "slug": "silo_prediction_addon",
+  "description": "Silo 0kg predikció REST API",
+  "startup": "services",
+  "boot": "auto",
+  "webui": "http://[HOST]:[PORT:5000]/predict",
+  "ports": {
+    "5000/tcp": 5000
+  },
+  "host_network": true,
+  "image": "local/silo_prediction_addon-{arch}",
+  "options": {},
+  "schema": {}
+}
