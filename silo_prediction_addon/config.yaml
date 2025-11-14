@@ -1,6 +1,6 @@
 name: "Silo Prediction"
-description: "Advanced silo empty prediction using linear regression"
-version: "4.3.0"
+description: "Advanced silo empty prediction using linear regression - Multi-silo support"
+version: "5.0.0"
 slug: "silo_prediction"
 init: false
 arch:
@@ -14,16 +14,22 @@ boot: auto
 hassio_api: true
 homeassistant_api: true
 options:
-  entity_id: "sensor.cfm_3_hall_modbus_1_lp7516_merleg_suly"
-  sensor_name: "CFM 3 Hall Silo Empty Prediction"
-  refill_threshold: 1000
-  max_capacity: 20000
+  silos:
+    - entity_id: "sensor.cfm_3_hall_modbus_1_lp7516_merleg_suly"
+      sensor_name: "CFM 3 Hall Silo Empty Prediction"
+      refill_threshold: 1000
+      max_capacity: 20000
+    - entity_id: "sensor.cfm_1_hall_silo_scale_bosche_silo_merleg_suly"
+      sensor_name: "CFM 1 Hall Silo Empty Prediction"
+      refill_threshold: 1000
+      max_capacity: 20000
   prediction_days: 10
   update_interval: 3600
 schema:
-  entity_id: str
-  sensor_name: str
-  refill_threshold: int(1,10000)
-  max_capacity: int(1000,50000)
+  silos:
+    - entity_id: str
+      sensor_name: str
+      refill_threshold: int(1,10000)
+      max_capacity: int(1000,50000)
   prediction_days: int(1,30)
   update_interval: int(300,7200)

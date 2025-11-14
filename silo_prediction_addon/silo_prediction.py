@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Silo Prediction Home Assistant Add-on
+Silo Prediction Home Assistant Add-on - Multi-Silo Support
 Intelligens siló kiürülési előrejelzés lineáris regresszióval
 """
 
 import os
+import json
 import time
 import logging
 import requests
@@ -24,38 +25,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class SiloPredictionAddon:
-    def __init__(self):
-        self.ha_url = os.getenv('HA_URL', 'http://supervisor/core')
-        self.ha_token = os.getenv('HA_TOKEN', os.getenv('SUPERVISOR_TOKEN'))
-        self.entity_id = os.getenv('ENTITY_ID', 'sensor.cfm_3_hall_modbus_1_lp7516_merleg_suly')
-        self.sensor_name = os.getenv('SENSOR_NAME', 'Silo Prediction')
-        self.refill_threshold = int(os.getenv('REFILL_THRESHOLD', '1000'))
-        self.max_capacity = int(os.getenv('MAX_CAPACITY', '20000'))
-        self.prediction_days = int(os.getenv('PREDICTION_DAYS', '10'))
-        self.update_interval = int(os.getenv('UPDATE_INTERVAL', '3600'))
+
+class SiloPredictor:
+    """Egy silo előrejelzési logikája"""
+
+    def __init__(self, ha_url: str, ha_token: str, entity_id: str, sensor_name: str,
+                 refill_threshold: int, max_capacity: int, prediction_days: int):
+        self.ha_url = ha_url
+        self.ha_token = ha_token
+        self.entity_id = entity_id
+        self.sensor_name = sensor_name
+        self.refill_threshold = refill_threshold
+        self.max_capacity = max_capacity
+        self.prediction_days = prediction_days
 
         self.headers = {
             'Authorization': f'Bearer {self.ha_token}',
             'Content-Type': 'application/json'
         }
 
-        logger.info("🚀 Silo Prediction Add-on indítva")
-        logger.info(f"Home Assistant URL: {self.ha_url}")
-        logger.info(f"Entity ID: {self.entity_id}")
+        logger.info(f"📦 Silo inicializálva: {self.sensor_name} ({self.entity_id})")
 
-        # Debug: Check if token is available
-        if not self.ha_token:
-            logger.error("❌ SUPERVISOR_TOKEN vagy HA_TOKEN nincs beállítva!")
-        else:
-            logger.info(f"✅ Token hossza: {len(self.ha_token)} karakter")
-
-    def get_historical_data(self, days: int = 10) -> List[Tuple[datetime, float]]:
+    def get_historical_data(self) -> List[Tuple[datetime, float]]:
         """Történeti adatok lekérése a Home Assistant API-ból"""
         end_time = datetime.now()
-        start_time = end_time - timedelta(days=days)
+        start_time = end_time - timedelta(days=self.prediction_days)
 
-        logger.info(f"📊 Adatok lekérése: {start_time} - {end_time}")
+        logger.info(f"📊 [{self.sensor_name}] Adatok lekérése: {start_time} - {end_time}")
 
         url = f"{self.ha_url}/api/history/period/{start_time.isoformat()}"
         params = {
@@ -70,7 +66,7 @@ class SiloPredictionAddon:
             data = response.json()
 
             if not data or not data[0]:
-                logger.warning("❌ Nincs adat a válaszban")
+                logger.warning(f"❌ [{self.sensor_name}] Nincs adat a válaszban")
                 return []
 
             # Adatok feldolgozása
@@ -78,27 +74,26 @@ class SiloPredictionAddon:
             for entry in data[0]:
                 try:
                     timestamp = datetime.fromisoformat(entry['last_changed'].replace('Z', '+00:00'))
-                    timestamp = timestamp.replace(tzinfo=None)  # Eltávolítjuk a timezone info-t
+                    timestamp = timestamp.replace(tzinfo=None)
 
                     state = entry.get('state', '0')
                     if state in ['unknown', 'unavailable', 'null', None]:
                         continue
 
                     weight = float(state)
-                    if 0 <= weight <= 50000:  # Érvényes tartomány
+                    if 0 <= weight <= 50000:
                         processed_data.append((timestamp, weight))
 
-                except (ValueError, KeyError, TypeError) as e:
+                except (ValueError, KeyError, TypeError):
                     continue
 
-            # Időrend szerint rendezés
             processed_data.sort(key=lambda x: x[0])
 
-            logger.info(f"✅ {len(processed_data)} adatpont betöltve")
+            logger.info(f"✅ [{self.sensor_name}] {len(processed_data)} adatpont betöltve")
             return processed_data
 
         except requests.RequestException as e:
-            logger.error(f"❌ API hiba: {e}")
+            logger.error(f"❌ [{self.sensor_name}] API hiba: {e}")
             return []
 
     def sample_hourly_data(self, data: List[Tuple[datetime, float]]) -> List[Tuple[datetime, float]]:
@@ -125,79 +120,61 @@ class SiloPredictionAddon:
                 current_hour = hour
                 hour_values = [weight]
 
-        # Utolsó óra
         if hour_values and current_hour:
             avg_weight = np.mean(hour_values)
             hourly_data.append((current_hour, avg_weight))
 
-        logger.info(f"📈 {len(hourly_data)} óránkénti adatpont mintavételezve")
+        logger.info(f"📈 [{self.sensor_name}] {len(hourly_data)} óránkénti adatpont mintavételezve")
         return hourly_data
 
     def detect_refills(self, data: List[Tuple[datetime, float]]) -> List[Tuple[datetime, float]]:
-        """
-        Feltöltések detektálása és csak az utolsó feltöltés UTÁNI adatok megtartása.
-        Ez azért fontos, mert csak az utolsó feltöltés után tudjuk pontosan előrejelezni az ürülést.
-        """
+        """Feltöltések detektálása és csak az utolsó feltöltés UTÁNI adatok megtartása"""
         if len(data) < 2:
             return data
 
         last_refill_index = -1
 
-        # Keressük meg az utolsó feltöltés indexét
         for i in range(1, len(data)):
             prev_weight = data[i-1][1]
             curr_weight = data[i][1]
             weight_change = curr_weight - prev_weight
 
-            # Ha a súly 3000kg-nál többel nőtt, az feltöltés
-            # (Óránkénti átlagolás után is detektálható legyen)
             if weight_change > 3000:
-                logger.info(f"🔄 Feltöltés detektálva: {data[i-1][0]} -> {data[i][0]}, "
+                logger.info(f"🔄 [{self.sensor_name}] Feltöltés detektálva: {data[i-1][0]} -> {data[i][0]}, "
                            f"Súlyváltozás: +{weight_change:.0f}kg")
                 last_refill_index = i
 
-        # Ha volt feltöltés, csak az utolsó feltöltés utáni adatokat tartjuk meg
         if last_refill_index >= 0:
             cleaned_data = data[last_refill_index:]
-            logger.info(f"✅ Utolsó feltöltés után: {len(cleaned_data)} adatpont ({data[last_refill_index][0]})")
+            logger.info(f"✅ [{self.sensor_name}] Utolsó feltöltés után: {len(cleaned_data)} adatpont ({data[last_refill_index][0]})")
         else:
             cleaned_data = data
-            logger.info(f"✅ Nem volt feltöltés, {len(cleaned_data)} adatpont használva")
+            logger.info(f"✅ [{self.sensor_name}] Nem volt feltöltés, {len(cleaned_data)} adatpont használva")
 
         return cleaned_data
 
     def calculate_prediction(self, data: List[Tuple[datetime, float]]) -> Optional[Dict]:
         """Előrejelzés készítése lineáris regresszióval"""
         if len(data) < 24:
-            logger.warning(f"❌ Nincs elég adat az előrejelzéshez (minimum 24 óra kell, {len(data)} van)")
+            logger.warning(f"❌ [{self.sensor_name}] Nincs elég adat az előrejelzéshez (minimum 24 óra kell, {len(data)} van)")
             return None
 
-        # Időpontok és súlyok szétválasztása
         timestamps = [t for t, w in data]
         weights = [w for t, w in data]
 
-        # Unix timestamp-ekké konvertálás (órák)
         start_time = timestamps[0]
         hours = [(t - start_time).total_seconds() / 3600 for t in timestamps]
 
-        # Lineáris regresszió
         slope, intercept, r_value, p_value, std_err = stats.linregress(hours, weights)
-
         r_squared = r_value ** 2
 
-        logger.info(f"📉 Regresszió: meredekség={slope:.2f} kg/óra, R²={r_squared:.4f}")
+        logger.info(f"📉 [{self.sensor_name}] Regresszió: meredekség={slope:.2f} kg/óra, R²={r_squared:.4f}")
 
         current_hours = hours[-1]
         current_weight = weights[-1]
 
-        # Számítsuk ki, mikor lesz 0 kg (mindig, függetlenül a trenddől)
-        # y = slope * x + intercept
-        # 0 = slope * x + intercept
-        # x = -intercept / slope
-
         if abs(slope) < 0.01:
-            # Ha a meredekség közel nulla, nincs értelmes előrejelzés
-            logger.warning("⚠️ Közel nulla meredekség, nincs trend")
+            logger.warning(f"⚠️ [{self.sensor_name}] Közel nulla meredekség, nincs trend")
             return {
                 'prediction_date': None,
                 'days_until_empty': None,
@@ -207,10 +184,8 @@ class SiloPredictionAddon:
                 'status': 'no_trend'
             }
 
-        # Ellenőrizzük a trend irányát
         if slope >= -0.1:
-            # A siló nem ürül (töltődik vagy stabil)
-            logger.info("⚠️ A siló nem ürül (pozitív vagy nulla trend)")
+            logger.info(f"⚠️ [{self.sensor_name}] A siló nem ürül (pozitív vagy nulla trend)")
             return {
                 'prediction_date': None,
                 'days_until_empty': None,
@@ -221,14 +196,11 @@ class SiloPredictionAddon:
                 'status': 'filling' if slope > 0 else 'stable'
             }
 
-        # Negatív slope - a siló ürül
-        # Hány óra múlva lesz 0 kg?
         hours_to_zero = -intercept / slope
         hours_from_now = hours_to_zero - current_hours
 
-        # Ellenőrizzük, hogy értelmes-e az előrejelzés
         if hours_from_now < 0:
-            logger.warning("⚠️ A számítás szerint már kiürült volna (hibás adat)")
+            logger.warning(f"⚠️ [{self.sensor_name}] A számítás szerint már kiürült volna (hibás adat)")
             return {
                 'prediction_date': None,
                 'days_until_empty': None,
@@ -242,7 +214,7 @@ class SiloPredictionAddon:
         days_until = hours_from_now / 24
 
         if days_until > 365:
-            logger.info(f"⚠️ Túl távoli előrejelzés: {days_until:.0f} nap")
+            logger.info(f"⚠️ [{self.sensor_name}] Túl távoli előrejelzés: {days_until:.0f} nap")
             return {
                 'prediction_date': None,
                 'days_until_empty': None,
@@ -253,17 +225,14 @@ class SiloPredictionAddon:
                 'status': 'too_far'
             }
 
-        # Érvényes ürülési előrejelzés
         prediction_datetime = datetime.now() + timedelta(hours=hours_from_now)
-
-        # Formázott dátum: YYYY-MM-DD HH:MM (másodperc nélkül)
         formatted_date = prediction_datetime.strftime('%Y-%m-%d %H:%M')
 
-        logger.info(f"📅 0 kg előrejelzés: {formatted_date}")
-        logger.info(f"⏱️ Hátralévő idő: {days_until:.1f} nap")
+        logger.info(f"📅 [{self.sensor_name}] 0 kg előrejelzés: {formatted_date}")
+        logger.info(f"⏱️ [{self.sensor_name}] Hátralévő idő: {days_until:.1f} nap")
 
         return {
-            'prediction_date': formatted_date,  # Formázott string, nem ISO
+            'prediction_date': formatted_date,
             'days_until_empty': round(days_until, 2),
             'slope': round(slope, 2),
             'r_squared': round(r_squared, 4),
@@ -275,13 +244,10 @@ class SiloPredictionAddon:
     def update_sensor(self, prediction_data: Dict):
         """Home Assistant szenzor frissítése"""
         if not prediction_data:
-            logger.warning("❌ Nincs előrejelzési adat a szenzor frissítéshez")
+            logger.warning(f"❌ [{self.sensor_name}] Nincs előrejelzési adat a szenzor frissítéshez")
             return
 
-        # Frissítjük a fő szenzort (dátum)
         self._update_date_sensor(prediction_data)
-
-        # Frissítjük a hátralévő idő szenzort
         self._update_time_remaining_sensor(prediction_data)
 
     def _update_date_sensor(self, prediction_data: Dict):
@@ -291,10 +257,7 @@ class SiloPredictionAddon:
         prediction_date = prediction_data.get('prediction_date')
         status = prediction_data.get('status', 'unknown')
 
-        if prediction_date:
-            state = prediction_date
-        else:
-            state = status
+        state = prediction_date if prediction_date else status
 
         attributes = {
             'prediction_date': prediction_date,
@@ -318,11 +281,9 @@ class SiloPredictionAddon:
         status = prediction_data.get('status', 'unknown')
 
         if days_until is not None and days_until >= 0:
-            # Nap és óra számítása
             days = int(days_until)
             hours = int((days_until - days) * 24)
 
-            # Formázott string
             if days > 0:
                 state = f"{days} nap {hours} óra"
             else:
@@ -350,50 +311,104 @@ class SiloPredictionAddon:
         }
 
         try:
-            logger.debug(f"Szenzor frissítés URL: {url}")
-            logger.debug(f"Payload: {payload}")
             response = requests.post(url, headers=self.headers, json=payload, timeout=10)
             response.raise_for_status()
-            logger.info(f"✅ Szenzor frissítve: {entity_id} = {state}")
+            logger.info(f"✅ [{self.sensor_name}] Szenzor frissítve: {entity_id} = {state}")
         except requests.RequestException as e:
-            logger.error(f"❌ Szenzor frissítési hiba ({entity_id}): {e}")
-            if hasattr(e.response, 'text'):
+            logger.error(f"❌ [{self.sensor_name}] Szenzor frissítési hiba ({entity_id}): {e}")
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
                 logger.error(f"Válasz: {e.response.text}")
 
+    def process(self):
+        """Teljes feldolgozási folyamat egy silohoz"""
+        try:
+            raw_data = self.get_historical_data()
+
+            if not raw_data:
+                logger.warning(f"⚠️ [{self.sensor_name}] Nincs adat")
+                return
+
+            hourly_data = self.sample_hourly_data(raw_data)
+            cleaned_data = self.detect_refills(hourly_data)
+            prediction = self.calculate_prediction(cleaned_data)
+
+            if prediction:
+                self.update_sensor(prediction)
+
+        except Exception as e:
+            logger.error(f"❌ [{self.sensor_name}] Hiba a feldolgozás során: {e}", exc_info=True)
+
+
+class MultiSiloManager:
+    """Multi-silo manager - kezeli az összes silót"""
+
+    def __init__(self):
+        self.ha_url = os.getenv('HA_URL', 'http://supervisor/core')
+        self.ha_token = os.getenv('HA_TOKEN', os.getenv('SUPERVISOR_TOKEN'))
+        self.prediction_days = int(os.getenv('PREDICTION_DAYS', '10'))
+        self.update_interval = int(os.getenv('UPDATE_INTERVAL', '3600'))
+
+        logger.info("🚀 Multi-Silo Prediction Add-on indítva")
+        logger.info(f"Home Assistant URL: {self.ha_url}")
+
+        if not self.ha_token:
+            logger.error("❌ SUPERVISOR_TOKEN vagy HA_TOKEN nincs beállítva!")
+        else:
+            logger.info(f"✅ Token hossza: {len(self.ha_token)} karakter")
+
+        # Siló konfiguráció betöltése
+        self.silos = self._load_silo_config()
+        logger.info(f"📦 {len(self.silos)} silo konfigurálva")
+
+    def _load_silo_config(self) -> List[SiloPredictor]:
+        """Siló konfiguráció betöltése JSON-ból"""
+        silos_json = os.getenv('SILOS_CONFIG', '[]')
+
+        try:
+            silos_config = json.loads(silos_json)
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Hibás JSON konfiguráció: {e}")
+            return []
+
+        silos = []
+        for silo_cfg in silos_config:
+            try:
+                silo = SiloPredictor(
+                    ha_url=self.ha_url,
+                    ha_token=self.ha_token,
+                    entity_id=silo_cfg['entity_id'],
+                    sensor_name=silo_cfg['sensor_name'],
+                    refill_threshold=silo_cfg.get('refill_threshold', 1000),
+                    max_capacity=silo_cfg.get('max_capacity', 20000),
+                    prediction_days=self.prediction_days
+                )
+                silos.append(silo)
+            except KeyError as e:
+                logger.error(f"❌ Hiányzó mező a silo konfigurációban: {e}")
+
+        return silos
+
     def run(self):
-        """Fő futási ciklus"""
-        logger.info("🔄 Prediction szolgáltatás indítva")
+        """Fő futási ciklus - periodikusan feldolgozza az összes silót"""
+        logger.info("🔄 Multi-Silo Prediction szolgáltatás indítva")
 
         while True:
             try:
-                # 1. Adatok lekérése
-                raw_data = self.get_historical_data(days=self.prediction_days)
+                logger.info("=" * 60)
+                logger.info(f"🔄 Új feldolgozási ciklus kezdődik ({len(self.silos)} silo)")
 
-                if not raw_data:
-                    logger.warning("⚠️ Nincs adat, várakozás...")
-                    time.sleep(self.update_interval)
-                    continue
+                for silo in self.silos:
+                    silo.process()
 
-                # 2. Óránkénti mintavételezés
-                hourly_data = self.sample_hourly_data(raw_data)
-
-                # 3. Feltöltések eltávolítása
-                cleaned_data = self.detect_refills(hourly_data)
-
-                # 4. Előrejelzés
-                prediction = self.calculate_prediction(cleaned_data)
-
-                # 5. Szenzor frissítése
-                if prediction:
-                    self.update_sensor(prediction)
-
+                logger.info(f"✅ Feldolgozási ciklus befejezve")
                 logger.info(f"⏰ Következő frissítés {self.update_interval} másodperc múlva...")
                 time.sleep(self.update_interval)
 
             except Exception as e:
                 logger.error(f"❌ Hiba a futás során: {e}", exc_info=True)
-                time.sleep(60)  # Hiba esetén 1 perc várakozás
+                time.sleep(60)
+
 
 if __name__ == '__main__':
-    addon = SiloPredictionAddon()
-    addon.run()
+    manager = MultiSiloManager()
+    manager.run()
