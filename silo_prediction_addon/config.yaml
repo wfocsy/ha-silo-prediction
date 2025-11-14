@@ -39,6 +39,13 @@ options:
       refill_threshold: 10000
       refill_time_window: 45
       area: cfm_3_hall
+    - name: CFM 1 Hall Silo (Bosche)
+      entity_id: sensor.cfm_1_hall_silo_scale_bosche_silo_merleg_suly
+      prediction_entity: sensor.cfm_1_hall_silo_empty_prediction
+      max_capacity: 20000
+      refill_threshold: 10000
+      refill_time_window: 45
+      area: cfm_1_hall
   prediction:
     history_days: 10
     min_data_points: 24
