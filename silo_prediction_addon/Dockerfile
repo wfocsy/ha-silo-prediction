@@ -23,4 +23,4 @@ COPY prediction_service.py /app/prediction_service.py
 # Make run script executable
 RUN chmod a+x /run.sh
 
-CMD ["/run.sh"]
+CMD [ "/run.sh" ]
