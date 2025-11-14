@@ -203,32 +203,31 @@ class SiloPredictionAddon:
         # Hány óra múlva lesz 0 kg?
         hours_to_zero = -intercept / slope
 
-        # Ha már a múltban lenne a 0, vagy irreálisan távol
-        if hours_to_zero < current_hours or hours_to_zero > current_hours + 365*24:
-            # Pozitív trend esetén vagy túl távoli jövő
-            if slope > 0:
-                logger.info("⚠️ A siló töltődik, nem fog kiürülni")
-                status = 'filling'
-            else:
-                logger.info("⚠️ Túl távoli előrejelzés (>365 nap)")
-                status = 'too_far'
-
-            return {
-                'prediction_date': None,
-                'days_until_empty': None,
-                'slope': slope,
-                'r_squared': r_squared,
-                'current_weight': current_weight,
-                'status': status
-            }
-
-        # Számítsuk ki a pontos dátumot
+        # Számítsuk ki a dátumot és az eltelt időt
         hours_from_now = hours_to_zero - current_hours
         prediction_datetime = datetime.now() + timedelta(hours=hours_from_now)
         days_until = hours_from_now / 24
 
+        # Állapot meghatározása
+        if slope > 0:
+            # Töltődik
+            status = 'filling'
+            logger.info("⚠️ A siló töltődik")
+        elif hours_from_now < 0:
+            # A 0 már a múltban lenne
+            status = 'already_empty'
+            logger.info("⚠️ A számítás szerint már kiürült volna")
+        elif days_until > 365:
+            # Túl távoli jövő
+            status = 'too_far'
+            logger.info(f"⚠️ Túl távoli előrejelzés: {days_until:.0f} nap")
+        else:
+            # Normális ürülés
+            status = 'emptying'
+            logger.info(f"✅ Ürülés folyamatban")
+
         logger.info(f"📅 0 kg előrejelzés: {prediction_datetime.strftime('%Y-%m-%d %H:%M')}")
-        logger.info(f"⏱️ Hátralévő idő: {days_until:.1f} nap")
+        logger.info(f"⏱️ Idő a 0 kg-ig: {days_until:.1f} nap")
 
         return {
             'prediction_date': prediction_datetime.isoformat(),
@@ -237,7 +236,7 @@ class SiloPredictionAddon:
             'r_squared': round(r_squared, 4),
             'current_weight': round(current_weight, 0),
             'threshold': 0,
-            'status': 'emptying'
+            'status': status
         }
 
     def update_sensor(self, prediction_data: Dict):
