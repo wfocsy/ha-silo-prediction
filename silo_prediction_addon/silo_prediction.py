@@ -255,11 +255,15 @@ class SiloPredictionAddon:
 
         # Érvényes ürülési előrejelzés
         prediction_datetime = datetime.now() + timedelta(hours=hours_from_now)
-        logger.info(f"📅 0 kg előrejelzés: {prediction_datetime.strftime('%Y-%m-%d %H:%M')}")
+
+        # Formázott dátum: YYYY-MM-DD HH:MM (másodperc nélkül)
+        formatted_date = prediction_datetime.strftime('%Y-%m-%d %H:%M')
+
+        logger.info(f"📅 0 kg előrejelzés: {formatted_date}")
         logger.info(f"⏱️ Hátralévő idő: {days_until:.1f} nap")
 
         return {
-            'prediction_date': prediction_datetime.isoformat(),
+            'prediction_date': formatted_date,  # Formázott string, nem ISO
             'days_until_empty': round(days_until, 2),
             'slope': round(slope, 2),
             'r_squared': round(r_squared, 4),
@@ -297,7 +301,6 @@ class SiloPredictionAddon:
             'threshold_kg': prediction_data.get('threshold'),
             'status': status,
             'friendly_name': self.sensor_name,
-            'device_class': 'timestamp',
             'icon': 'mdi:silo'
         }
 
