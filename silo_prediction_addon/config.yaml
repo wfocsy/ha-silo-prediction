@@ -1,6 +1,6 @@
 name: "Silo Prediction"
 description: "Advanced silo empty prediction using linear regression"
-version: "4.1.1"
+version: "4.2.0"
 slug: "silo_prediction"
 init: false
 arch:
