@@ -112,16 +112,17 @@ class SiloPredictionService:
                         sample = cursor.fetchone()
                         logger.info(f"Sample statistics row columns: {list(sample.keys()) if sample else 'None'}")
 
-                        # Statistics query - növeljük 30 napra
+                        # Statistics query - használjuk a start_ts Unix timestampet!
                         stats_data_query = """
                         SELECT
-                            s.start,
+                            FROM_UNIXTIME(s.start_ts) as start_datetime,
+                            s.start_ts,
                             s.mean as state
                         FROM statistics s
                         JOIN statistics_meta sm ON s.metadata_id = sm.id
                         WHERE sm.statistic_id = %s
-                            AND s.start >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-                        ORDER BY s.start ASC
+                            AND s.start_ts >= UNIX_TIMESTAMP(DATE_SUB(NOW(), INTERVAL 30 DAY))
+                        ORDER BY s.start_ts ASC
                         """
                         cursor.execute(stats_data_query, (entity_id,))
                         results = cursor.fetchall()
@@ -134,7 +135,7 @@ class SiloPredictionService:
                             try:
                                 weight = float(row['state'])
                                 if weight > 0:
-                                    dt = row['start']
+                                    dt = row['start_datetime']
                                     if isinstance(dt, str):
                                         dt = datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
                                     data.append((dt, weight))
