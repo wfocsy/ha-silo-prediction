@@ -17,10 +17,11 @@ RUN \
 WORKDIR /app
 
 # Copy application files
-COPY run.sh /run.sh
 COPY prediction_service.py /app/prediction_service.py
 
-# Make run script executable
-RUN chmod a+x /run.sh
+# Copy rootfs
+COPY rootfs /
 
-CMD [ "/run.sh" ]
+# Make service scripts executable
+RUN chmod a+x /etc/services.d/silo_prediction/run \
+    && chmod a+x /etc/services.d/silo_prediction/finish
