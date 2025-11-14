@@ -15,7 +15,9 @@ Az add-on minden konfigurált silohoz:
 
 ## Multi-Silo Konfiguráció
 
-A config felületen tetszőleges számú silót adhatsz hozzá:
+**FONTOS**: Új silo hozzáadásához használd a YAML szerkesztőt!
+
+Home Assistant > Configuration > Add-ons > Silo Prediction > **Configuration TAB** > **Edit in YAML** (jobb felső sarokban a 3 pont)
 
 ```yaml
 silos:
@@ -27,9 +29,21 @@ silos:
     sensor_name: "CFM 1 Hall Silo Prediction"
     refill_threshold: 1000
     max_capacity: 20000
+  # Új silo hozzáadása: másold és szerkeszd az alábbi sort
+  # - entity_id: "sensor.uj_silo_merleg"
+  #   sensor_name: "Új Silo Prediction"
+  #   refill_threshold: 1000
+  #   max_capacity: 20000
 prediction_days: 10        # Hány nap adat alapján
 update_interval: 3600      # Frissítési intervallum másodpercben
 ```
+
+**Új silo hozzáadása lépésről lépésre:**
+1. Nyisd meg az add-on Configuration tab-ját
+2. Kattints a **"Edit in YAML"** gombra (jobb felső sarokban)
+3. Másold be az új silo konfigurációt a `silos:` lista végére
+4. Mentsd el (Save)
+5. Indítsd újra az add-ont (Restart)
 
 ### Siló paraméterek
 
