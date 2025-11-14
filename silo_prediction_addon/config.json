@@ -1,6 +1,6 @@
 {
   "name": "Silo Prediction Add-on",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "slug": "silo_prediction_addon",
   "description": "Silo 0kg predikció REST API",
   "startup": "services",
