@@ -87,9 +87,11 @@ class SiloPredictionService:
                         total_stats = cursor.fetchone()
                         logger.info(f"Total statistics rows for {entity_id}: {total_stats}")
 
-                        # DEBUG: Legfrissebb és legrégebbi dátum
+                        # DEBUG: Legfrissebb és legrégebbi dátum - try different column names
+                        # Próbáljuk created, start, start_ts
                         date_range_query = """
-                        SELECT MIN(s.start) as oldest, MAX(s.start) as newest
+                        SELECT MIN(s.created) as oldest_created, MAX(s.created) as newest_created,
+                               MIN(s.start_ts) as oldest_ts, MAX(s.start_ts) as newest_ts
                         FROM statistics s
                         JOIN statistics_meta sm ON s.metadata_id = sm.id
                         WHERE sm.statistic_id = %s
@@ -97,6 +99,18 @@ class SiloPredictionService:
                         cursor.execute(date_range_query, (entity_id,))
                         date_range = cursor.fetchone()
                         logger.info(f"Statistics date range: {date_range}")
+
+                        # DEBUG: Show first row structure
+                        sample_query = """
+                        SELECT *
+                        FROM statistics s
+                        JOIN statistics_meta sm ON s.metadata_id = sm.id
+                        WHERE sm.statistic_id = %s
+                        LIMIT 1
+                        """
+                        cursor.execute(sample_query, (entity_id,))
+                        sample = cursor.fetchone()
+                        logger.info(f"Sample statistics row columns: {list(sample.keys()) if sample else 'None'}")
 
                         # Statistics query - növeljük 30 napra
                         stats_data_query = """
