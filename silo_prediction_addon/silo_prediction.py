@@ -180,40 +180,54 @@ class SiloPredictionAddon:
 
         logger.info(f"📉 Regresszió: meredekség={slope:.2f} kg/óra, R²={r_squared:.4f}")
 
-        # Ha a meredekség pozitív (nő a tömeg), nincs kiürülési előrejelzés
-        if slope >= -0.1:
-            logger.info("⚠️ A siló nem ürül (pozitív vagy nulla trend)")
+        current_hours = hours[-1]
+        current_weight = weights[-1]
+
+        # Számítsuk ki, mikor lesz 0 kg (mindig, függetlenül a trenddől)
+        # y = slope * x + intercept
+        # 0 = slope * x + intercept
+        # x = -intercept / slope
+
+        if abs(slope) < 0.01:
+            # Ha a meredekség közel nulla, nincs értelmes előrejelzés
+            logger.warning("⚠️ Közel nulla meredekség, nincs trend")
             return {
                 'prediction_date': None,
                 'days_until_empty': None,
                 'slope': slope,
                 'r_squared': r_squared,
-                'current_weight': weights[-1],
-                'status': 'stable'
+                'current_weight': current_weight,
+                'status': 'no_trend'
             }
 
-        # Mikor éri el a küszöböt?
-        current_hours = hours[-1]
-        current_weight = weights[-1]
+        # Hány óra múlva lesz 0 kg?
+        hours_to_zero = -intercept / slope
 
-        # Hány óra múlva lesz a refill_threshold?
-        hours_to_threshold = (self.refill_threshold - current_weight) / slope
+        # Ha már a múltban lenne a 0, vagy irreálisan távol
+        if hours_to_zero < current_hours or hours_to_zero > current_hours + 365*24:
+            # Pozitív trend esetén vagy túl távoli jövő
+            if slope > 0:
+                logger.info("⚠️ A siló töltődik, nem fog kiürülni")
+                status = 'filling'
+            else:
+                logger.info("⚠️ Túl távoli előrejelzés (>365 nap)")
+                status = 'too_far'
 
-        if hours_to_threshold < 0:
-            logger.warning("⚠️ A küszöb már el lett érve")
             return {
                 'prediction_date': None,
-                'days_until_empty': 0,
+                'days_until_empty': None,
                 'slope': slope,
                 'r_squared': r_squared,
                 'current_weight': current_weight,
-                'status': 'below_threshold'
+                'status': status
             }
 
-        prediction_datetime = datetime.now() + timedelta(hours=hours_to_threshold)
-        days_until = hours_to_threshold / 24
+        # Számítsuk ki a pontos dátumot
+        hours_from_now = hours_to_zero - current_hours
+        prediction_datetime = datetime.now() + timedelta(hours=hours_from_now)
+        days_until = hours_from_now / 24
 
-        logger.info(f"📅 Előrejelzés: {prediction_datetime.strftime('%Y-%m-%d %H:%M')}")
+        logger.info(f"📅 0 kg előrejelzés: {prediction_datetime.strftime('%Y-%m-%d %H:%M')}")
         logger.info(f"⏱️ Hátralévő idő: {days_until:.1f} nap")
 
         return {
@@ -222,8 +236,8 @@ class SiloPredictionAddon:
             'slope': round(slope, 2),
             'r_squared': round(r_squared, 4),
             'current_weight': round(current_weight, 0),
-            'threshold': self.refill_threshold,
-            'status': 'active'
+            'threshold': 0,
+            'status': 'emptying'
         }
 
     def update_sensor(self, prediction_data: Dict):
@@ -234,20 +248,28 @@ class SiloPredictionAddon:
 
         sensor_entity_id = f"sensor.{self.sensor_name.lower().replace(' ', '_')}"
 
-        # Ha nincs days_until_empty (pl. stable state), használjunk 'unknown' értéket
-        days_until = prediction_data.get('days_until_empty')
-        state = days_until if days_until is not None else 'unknown'
+        # A state értéke: ha van prediction_date, akkor azt használjuk (timestamp formátumban)
+        # Különben a status értékét
+        prediction_date = prediction_data.get('prediction_date')
+        status = prediction_data.get('status', 'unknown')
+
+        if prediction_date:
+            # ISO formátumú dátumot használunk state-ként
+            state = prediction_date
+        else:
+            # Ha nincs dátum, a status-t használjuk
+            state = status
 
         attributes = {
-            'prediction_date': prediction_data.get('prediction_date'),
+            'prediction_date': prediction_date,
             'days_until_empty': prediction_data.get('days_until_empty'),
             'slope_kg_per_hour': prediction_data.get('slope'),
             'r_squared': prediction_data.get('r_squared'),
             'current_weight_kg': prediction_data.get('current_weight'),
             'threshold_kg': prediction_data.get('threshold'),
-            'status': prediction_data.get('status'),
+            'status': status,
             'friendly_name': self.sensor_name,
-            'unit_of_measurement': 'days',
+            'device_class': 'timestamp',
             'icon': 'mdi:silo'
         }
 
