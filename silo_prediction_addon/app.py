@@ -380,9 +380,17 @@ class SiloPredictionService:
                     existing_state = cursor.fetchone()
 
                     # Step 3: Get or create attributes_id
+                    # First check the state_attributes schema
+                    attrs_schema_query = "DESCRIBE state_attributes"
+                    cursor.execute(attrs_schema_query)
+                    attrs_schema = cursor.fetchall()
+                    logger.info(f"DEBUG - state_attributes schema: {attrs_schema}")
+
                     # First check if identical attributes already exist
                     import hashlib
                     attrs_hash = hashlib.sha1(attributes_json.encode()).hexdigest()
+                    logger.info(f"DEBUG - attrs_hash: '{attrs_hash}' (length: {len(attrs_hash)})")
+
                     check_attrs_query = "SELECT attributes_id FROM state_attributes WHERE hash = %s AND shared_attrs = %s LIMIT 1"
                     cursor.execute(check_attrs_query, (attrs_hash, attributes_json))
                     existing_attrs = cursor.fetchone()
