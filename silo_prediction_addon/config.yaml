@@ -11,6 +11,8 @@ arch:
   - i386
 startup: services
 boot: auto
+hassio_api: true
+homeassistant_api: true
 options:
   entity_id: "sensor.cfm_3_hall_modbus_1_lp7516_merleg_suly"
   sensor_name: "CFM 3 Hall Silo Empty Prediction"
