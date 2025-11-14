@@ -359,6 +359,12 @@ class SiloPredictionService:
                     import json
                     attributes_json = json.dumps(attributes)
 
+                    # DEBUG: Check states table schema
+                    schema_query = "DESCRIBE states"
+                    cursor.execute(schema_query)
+                    schema = cursor.fetchall()
+                    logger.info(f"DEBUG - states table schema: {schema}")
+
                     # Első: Ellenőrizzük hogy létezik-e már az entitás
                     check_query = "SELECT entity_id FROM states WHERE entity_id = %s ORDER BY last_updated DESC LIMIT 1"
                     cursor.execute(check_query, (entity_id,))
