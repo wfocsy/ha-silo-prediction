@@ -47,15 +47,32 @@ class SiloPredictionService:
         """Get historical data for entity from Home Assistant database"""
         connection = self.get_db_connection()
         if not connection:
+            logger.error("No database connection!")
             return []
 
         try:
             with connection.cursor() as cursor:
-                # Először debug: hány sora van összesen?
+                # DEBUG 1: Létezik egyáltalán az entity_id a states táblában?
                 debug_query = "SELECT COUNT(*) as total FROM states WHERE entity_id = %s"
                 cursor.execute(debug_query, (entity_id,))
                 total_count = cursor.fetchone()
-                logger.info(f"Total rows for {entity_id}: {total_count}")
+                logger.info(f"Total rows in states for '{entity_id}': {total_count}")
+
+                # DEBUG 2: Ha 0, keressük meg hasonló nevű entitásokat
+                if total_count['total'] == 0:
+                    logger.warning(f"Entity '{entity_id}' not found in states table!")
+                    similar_query = "SELECT DISTINCT entity_id FROM states WHERE entity_id LIKE %s LIMIT 10"
+                    cursor.execute(similar_query, (f"%{entity_id.split('.')[-1][:20]}%",))
+                    similar = cursor.fetchall()
+                    logger.info(f"Similar entities found: {similar}")
+
+                    # DEBUG 3: Nézzük a statistics táblát is
+                    stats_query = "SELECT COUNT(*) as total FROM statistics_meta WHERE statistic_id = %s"
+                    cursor.execute(stats_query, (entity_id,))
+                    stats_count = cursor.fetchone()
+                    logger.info(f"Found in statistics_meta: {stats_count}")
+
+                    return []
 
                 # Egyszerűsített query - csak az alapokat kérjük le
                 query = """
