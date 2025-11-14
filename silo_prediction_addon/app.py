@@ -380,30 +380,30 @@ class SiloPredictionService:
                     existing_state = cursor.fetchone()
 
                     # Step 3: Get or create attributes_id
-                    # First check the state_attributes schema
-                    attrs_schema_query = "DESCRIBE state_attributes"
-                    cursor.execute(attrs_schema_query)
-                    attrs_schema = cursor.fetchall()
-                    logger.info(f"DEBUG - state_attributes schema: {attrs_schema}")
-
-                    # First check if identical attributes already exist
+                    # Calculate hash as integer (INT 10 unsigned in database)
                     import hashlib
-                    attrs_hash = hashlib.sha1(attributes_json.encode()).hexdigest()
-                    logger.info(f"DEBUG - attrs_hash: '{attrs_hash}' (length: {len(attrs_hash)})")
+                    import binascii
 
-                    check_attrs_query = "SELECT attributes_id FROM state_attributes WHERE hash = %s AND shared_attrs = %s LIMIT 1"
-                    cursor.execute(check_attrs_query, (attrs_hash, attributes_json))
+                    # Create hash and convert hex to integer, then take modulo to fit in INT(10) unsigned
+                    hash_hex = hashlib.sha1(attributes_json.encode()).hexdigest()
+                    # Convert first 8 hex chars to int (32 bits) to fit in INT(10) unsigned (max ~4 billion)
+                    attrs_hash_int = int(hash_hex[:8], 16)
+                    logger.info(f"DEBUG - attrs_hash_int: {attrs_hash_int}")
+
+                    # Check if identical attributes already exist (match by shared_attrs JSON)
+                    check_attrs_query = "SELECT attributes_id FROM state_attributes WHERE shared_attrs = %s LIMIT 1"
+                    cursor.execute(check_attrs_query, (attributes_json,))
                     existing_attrs = cursor.fetchone()
 
                     if existing_attrs:
                         attributes_id = existing_attrs['attributes_id']
                         logger.info(f"Using existing attributes_id {attributes_id}")
                     else:
-                        # Insert new attributes
+                        # Insert new attributes with integer hash
                         insert_attrs_query = "INSERT INTO state_attributes (hash, shared_attrs) VALUES (%s, %s)"
-                        cursor.execute(insert_attrs_query, (attrs_hash, attributes_json))
+                        cursor.execute(insert_attrs_query, (attrs_hash_int, attributes_json))
                         attributes_id = cursor.lastrowid
-                        logger.info(f"Created new attributes_id {attributes_id}")
+                        logger.info(f"Created new attributes_id {attributes_id} with hash {attrs_hash_int}")
 
                     # Step 4: Insert or update the state
                     import time
