@@ -316,11 +316,15 @@ class SiloPredictionService:
         """Update Home Assistant entity with prediction"""
         try:
             # Try SUPERVISOR_TOKEN first, then fallback to config
-            token = os.environ.get('SUPERVISOR_TOKEN') or self.config.get('homeassistant_token', '')
+            supervisor_token = os.environ.get('SUPERVISOR_TOKEN')
+            config_token = self.config.get('homeassistant_token', '')
+            token = supervisor_token or config_token
+
+            logger.info(f"Token sources - SUPERVISOR_TOKEN: {'SET' if supervisor_token else 'NOT SET'}, config token: {'SET' if config_token else 'NOT SET'}, using: {'supervisor' if supervisor_token else 'config' if config_token else 'NONE'}")
 
             if not token:
                 logger.error("No Home Assistant token available! Set homeassistant_token in config or ensure SUPERVISOR_TOKEN is set.")
-                return
+                return False
 
             ha_url = "http://supervisor/core/api"
             headers = {
@@ -361,14 +365,19 @@ class SiloPredictionService:
                 "attributes": attributes
             }
             
-            response = requests.post(f"{ha_url}/states/{entity_id}", 
+            logger.info(f"Attempting to update entity {entity_id} at {ha_url}/states/{entity_id}")
+            logger.debug(f"Payload: {payload}")
+
+            response = requests.post(f"{ha_url}/states/{entity_id}",
                                    headers=headers, json=payload)
-            
-            if response.status_code == 200:
+
+            logger.info(f"Response status: {response.status_code}, body: {response.text[:500]}")
+
+            if response.status_code == 200 or response.status_code == 201:
                 logger.info(f"Updated entity {entity_id} successfully")
                 return True
             else:
-                logger.error(f"Failed to update entity {entity_id}: {response.status_code}")
+                logger.error(f"Failed to update entity {entity_id}: {response.status_code}, response: {response.text}")
                 return False
                 
         except Exception as e:
