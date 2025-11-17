@@ -1,6 +1,6 @@
 name: "Silo Prediction"
-description: "Advanced silo empty prediction using linear regression - Multi-silo support"
-version: "5.1.1"
+description: "Advanced silo empty prediction with growth correction and early prediction - Multi-silo support"
+version: "5.3.0"
 slug: "silo_prediction"
 init: false
 arch:
@@ -19,10 +19,16 @@ options:
       sensor_name: "CFM 3 Hall Silo Prediction"
       refill_threshold: 1000
       max_capacity: 20000
+      enable_growth_correction: true
+      animal_age_days: 28.0
+      growth_rate_kg_per_hour_per_day: 0.000201
     - entity_id: "sensor.cfm_1_hall_silo_scale_bosche_silo_merleg_suly"
       sensor_name: "CFM 1 Hall Silo Prediction"
       refill_threshold: 1000
       max_capacity: 20000
+      enable_growth_correction: true
+      animal_age_days: 28.0
+      growth_rate_kg_per_hour_per_day: 0.000201
   prediction_days: 10
   update_interval: 3600
 schema:
@@ -31,5 +37,8 @@ schema:
       sensor_name: str
       refill_threshold: int(1,10000)
       max_capacity: int(1000,50000)
+      enable_growth_correction: bool?
+      animal_age_days: float?
+      growth_rate_kg_per_hour_per_day: float?
   prediction_days: int(1,30)
   update_interval: int(300,7200)

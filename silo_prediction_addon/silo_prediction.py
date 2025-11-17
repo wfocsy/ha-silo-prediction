@@ -40,7 +40,9 @@ class SiloPredictor:
     """Egy silo előrejelzési logikája"""
 
     def __init__(self, ha_url: str, ha_token: str, entity_id: str, sensor_name: str,
-                 refill_threshold: int, max_capacity: int, prediction_days: int):
+                 refill_threshold: int, max_capacity: int, prediction_days: int,
+                 enable_growth_correction: bool = False, animal_age_days: float = 25.0,
+                 growth_rate_kg_per_hour_per_day: float = 0.000201):
         self.ha_url = ha_url
         self.ha_token = ha_token
         self.entity_id = entity_id
@@ -49,12 +51,58 @@ class SiloPredictor:
         self.max_capacity = max_capacity
         self.prediction_days = prediction_days
 
+        # Növekedési korrekció paraméterek
+        self.enable_growth_correction = enable_growth_correction
+        self.animal_age_days = animal_age_days
+        self.growth_rate_kg_per_hour_per_day = growth_rate_kg_per_hour_per_day
+
+        # Előző ciklus slope tárolása (betöltés HA szenzorból)
+        self.previous_slope = None
+        self.previous_r_squared = None
+
         self.headers = {
             'Authorization': f'Bearer {self.ha_token}',
             'Content-Type': 'application/json'
         }
 
         logger.info(f"📦 Silo inicializálva: {self.sensor_name} ({self.entity_id})")
+        if self.enable_growth_correction:
+            logger.info(f"🌱 Növekedési korrekció ENGEDÉLYEZVE: állat életkor={self.animal_age_days} nap, "
+                       f"növekedési ráta={self.growth_rate_kg_per_hour_per_day:.6f} kg/óra/nap")
+
+        # Betöltjük az előző ciklus slope-ját (ha van)
+        self._load_previous_slope()
+
+    def _load_previous_slope(self):
+        """Előző ciklus slope betöltése a HA szenzor attribútumaiból"""
+        sensor_entity_id = f"sensor.{self.sensor_name.lower().replace(' ', '_')}"
+        url = f"{self.ha_url}/api/states/{sensor_entity_id}"
+
+        try:
+            response = requests.get(url, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                attributes = data.get('attributes', {})
+
+                self.previous_slope = attributes.get('previous_slope_kg_per_hour')
+                self.previous_r_squared = attributes.get('previous_r_squared')
+
+                if self.previous_slope is not None:
+                    logger.info(f"📥 [{self.sensor_name}] Előző ciklus slope betöltve: "
+                               f"{self.previous_slope:.4f} kg/óra (R²={self.previous_r_squared:.4f})")
+                else:
+                    logger.info(f"ℹ️ [{self.sensor_name}] Nincs előző ciklus slope adat")
+            else:
+                logger.debug(f"ℹ️ [{self.sensor_name}] Szenzor még nem létezik, nincs előző slope")
+        except Exception as e:
+            logger.debug(f"ℹ️ [{self.sensor_name}] Előző slope betöltése nem sikerült: {e}")
+
+    def _save_current_slope(self, slope: float, r_squared: float):
+        """Jelenlegi slope mentése a következő ciklushoz"""
+        self.previous_slope = slope
+        self.previous_r_squared = r_squared
+        logger.info(f"💾 [{self.sensor_name}] Slope mentve a következő ciklushoz: "
+                   f"{slope:.4f} kg/óra (R²={r_squared:.4f})")
 
     def get_historical_data(self) -> List[Tuple[datetime, float]]:
         """Történeti adatok lekérése a Home Assistant API-ból"""
@@ -167,10 +215,19 @@ class SiloPredictor:
         return cleaned_data
 
     def calculate_prediction(self, data: List[Tuple[datetime, float]]) -> Optional[Dict]:
-        """Előrejelzés készítése lineáris regresszióval"""
+        """Előrejelzés készítése lineáris regresszióval (opcionális növekedési korrekcióval)"""
+
+        # Ha kevés adat van, de van előző slope, használjuk azt
+        use_previous_slope = False
         if len(data) < 24:
-            logger.warning(f"❌ [{self.sensor_name}] Nincs elég adat az előrejelzéshez (minimum 24 óra kell, {len(data)} van)")
-            return None
+            if self.previous_slope is not None and len(data) >= 2:
+                logger.info(f"⚠️ [{self.sensor_name}] Kevés adat ({len(data)} óra < 24 óra), "
+                           f"előző ciklus slope-ját használom: {self.previous_slope:.4f} kg/óra")
+                use_previous_slope = True
+            else:
+                logger.warning(f"❌ [{self.sensor_name}] Nincs elég adat az előrejelzéshez "
+                             f"(minimum 24 óra vagy előző slope kell, {len(data)} van)")
+                return None
 
         timestamps = [t for t, w in data]
         weights = [w for t, w in data]
@@ -178,10 +235,27 @@ class SiloPredictor:
         start_time = timestamps[0]
         hours = [(t - start_time).total_seconds() / 3600 for t in timestamps]
 
-        slope, intercept, r_value, p_value, std_err = stats.linregress(hours, weights)
-        r_squared = r_value ** 2
+        # Slope meghatározása
+        if use_previous_slope:
+            # Használjuk az előző ciklus slope-ját
+            slope = self.previous_slope
+            r_squared = self.previous_r_squared if self.previous_r_squared else 0.95
 
-        logger.info(f"📉 [{self.sensor_name}] Regresszió: meredekség={slope:.2f} kg/óra, R²={r_squared:.4f}")
+            # Intercept becslése a jelenlegi adatokból
+            # intercept = weight - slope * hours
+            intercept = weights[-1] - slope * hours[-1]
+
+            logger.info(f"📉 [{self.sensor_name}] Előző ciklus slope használata: meredekség={slope:.2f} kg/óra, R²={r_squared:.4f}")
+        else:
+            # Normál regresszió
+            slope, intercept, r_value, p_value, std_err = stats.linregress(hours, weights)
+            r_squared = r_value ** 2
+
+            # Mentjük el a slope-ot a következő ciklushoz
+            if r_squared > 0.7:  # Csak jó minőségű slope-ot mentünk
+                self._save_current_slope(slope, r_squared)
+
+            logger.info(f"📉 [{self.sensor_name}] Regresszió: meredekség={slope:.2f} kg/óra, R²={r_squared:.4f}")
 
         current_hours = hours[-1]
         current_weight = weights[-1]
@@ -209,8 +283,16 @@ class SiloPredictor:
                 'status': 'filling' if slope > 0 else 'stable'
             }
 
-        hours_to_zero = -intercept / slope
-        hours_from_now = hours_to_zero - current_hours
+        # Növekedési korrekció alkalmazása
+        if self.enable_growth_correction:
+            hours_from_now = self._calculate_with_growth_correction(
+                current_weight, slope, current_hours, self.animal_age_days
+            )
+            logger.info(f"🌱 [{self.sensor_name}] Növekedési korrekció alkalmazva: {hours_from_now:.1f} óra")
+        else:
+            # Eredeti lineáris számítás
+            hours_to_zero = -intercept / slope
+            hours_from_now = hours_to_zero - current_hours
 
         if hours_from_now < 0:
             logger.warning(f"⚠️ [{self.sensor_name}] A számítás szerint már kiürült volna (hibás adat)")
@@ -253,8 +335,67 @@ class SiloPredictor:
             'r_squared': round(r_squared, 4),
             'current_weight': round(current_weight, 0),
             'threshold': 0,
-            'status': 'emptying'
+            'status': 'emptying',
+            'growth_correction_enabled': self.enable_growth_correction
         }
+
+    def _calculate_with_growth_correction(self, current_weight: float, base_slope: float,
+                                          current_hours: float, animal_age_days: float) -> float:
+        """
+        Növekedési korrekciós számítás - iteratív megoldás
+
+        A növekvő takarmányfogyasztás miatt a siló gyorsabban ürül, mint amit a lineáris regresszió mutat.
+
+        Args:
+            current_weight: Jelenlegi súly (kg)
+            base_slope: Lineáris regresszió meredeksége (kg/óra) - NEGATÍV!
+            current_hours: Eltelt órák száma a mérési kezdet óta
+            animal_age_days: Állatok jelenlegi életkora napokban
+
+        Returns:
+            Hátralévő órák száma a 0 kg eléréséig
+        """
+        # Iteratív számítás - óránkénti szimulációval
+        weight = current_weight
+        hours_elapsed = 0
+        max_iterations = 10000  # Maximum ~416 nap
+
+        # Jelenlegi nap
+        current_day = animal_age_days
+
+        logger.info(f"🧮 [{self.sensor_name}] Növekedési szimulációs számítás indítása...")
+        logger.info(f"   Kezdeti súly: {current_weight:.1f} kg")
+        logger.info(f"   Alapmeredekség: {base_slope:.4f} kg/óra")
+        logger.info(f"   Állat életkor: {animal_age_days:.1f} nap")
+
+        while weight > 0 and hours_elapsed < max_iterations:
+            # Aktuális nap (az állatokéhoz képest)
+            day_in_cycle = current_day + (hours_elapsed / 24.0)
+
+            # Óránkénti fogyás = alap fogyás + növekedési korrekció
+            # Növekedési korrekció: napi kb. 0.201 g/óra/nap = 0.000201 kg/óra/nap
+            growth_adjustment = self.growth_rate_kg_per_hour_per_day * day_in_cycle
+
+            # Teljes óránkénti fogyás (negatív, ezért a growth_adjustment CSÖKKENTI)
+            hourly_consumption = base_slope - growth_adjustment
+
+            # Súly csökkentése
+            weight += hourly_consumption  # hourly_consumption negatív, tehát csökkenti a súlyt
+
+            hours_elapsed += 1
+
+            # Debug log minden 100 óránként
+            if hours_elapsed % 100 == 0:
+                logger.debug(f"   {hours_elapsed}h: súly={weight:.1f} kg, "
+                           f"napi_pozíció={day_in_cycle:.1f}, korrekció={growth_adjustment:.6f} kg/óra")
+
+        if hours_elapsed >= max_iterations:
+            logger.warning(f"⚠️ [{self.sensor_name}] Szimulációs limit elérve ({max_iterations} óra)")
+            return max_iterations
+
+        logger.info(f"✅ [{self.sensor_name}] Szimulációs eredmény: {hours_elapsed} óra ({hours_elapsed/24:.1f} nap)")
+
+        return hours_elapsed
 
     def update_sensor(self, prediction_data: Dict):
         """Home Assistant szenzor frissítése"""
@@ -284,7 +425,11 @@ class SiloPredictor:
             'threshold_kg': prediction_data.get('threshold'),
             'status': status,
             'friendly_name': self.sensor_name,
-            'icon': 'mdi:silo'
+            'icon': 'mdi:silo',
+            # Előző ciklus slope mentése a következő ciklushoz
+            'previous_slope_kg_per_hour': self.previous_slope,
+            'previous_r_squared': self.previous_r_squared,
+            'growth_correction_enabled': prediction_data.get('growth_correction_enabled', False)
         }
 
         self._post_sensor(sensor_entity_id, state, attributes)
@@ -414,7 +559,11 @@ class MultiSiloManager:
                     sensor_name=silo_cfg['sensor_name'],
                     refill_threshold=silo_cfg.get('refill_threshold', 1000),
                     max_capacity=silo_cfg.get('max_capacity', 20000),
-                    prediction_days=self.prediction_days
+                    prediction_days=self.prediction_days,
+                    # Növekedési korrekció paraméterek
+                    enable_growth_correction=silo_cfg.get('enable_growth_correction', False),
+                    animal_age_days=silo_cfg.get('animal_age_days', 25.0),
+                    growth_rate_kg_per_hour_per_day=silo_cfg.get('growth_rate_kg_per_hour_per_day', 0.000201)
                 )
                 silos.append(silo)
             except KeyError as e:
