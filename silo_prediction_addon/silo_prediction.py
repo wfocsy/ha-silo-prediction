@@ -342,24 +342,38 @@ class SiloPredictor:
 
     def _format_prediction_with_window(self, prediction_datetime: datetime) -> str:
         """
-        Formázza az előrejelzést időablakkal (±1 óra)
+        Formázza az előrejelzést időablakkal (±1 óra, kerekítve)
 
         Formátum:
-        - Ma 14-16 óra között
-        - Holnap 10-12 óra között
-        - 2025-12-15 18-20 óra között
+        - Ma 16-18 óra között (~17:45)
+        - Holnap 10-12 óra között (~11:30)
+        - 2025-12-15 16-18 óra között (~17:20)
+
+        Logika: prediction_datetime ± 1 óra, kerekítve egész órákra
 
         Args:
             prediction_datetime: Előrejelzett időpont
 
         Returns:
-            Formázott string időablakkal
+            Formázott string időablakkal és pontos idővel zárójelben
         """
         now = datetime.now(LOCAL_TZ)
 
-        # Kerekítés órára (alsó határ)
-        hour_start = prediction_datetime.hour
-        hour_end = (hour_start + 2) % 24  # +2 óra ablak
+        # ±1 óra ablak számítása
+        window_start_dt = prediction_datetime - timedelta(hours=1)
+        window_end_dt = prediction_datetime + timedelta(hours=1)
+
+        # Kerekítés egész órákra
+        # Ha perc < 30, lefelé kerekítünk, különben felfelé
+        if window_start_dt.minute < 30:
+            hour_start = window_start_dt.hour
+        else:
+            hour_start = (window_start_dt.hour + 1) % 24
+
+        if window_end_dt.minute < 30:
+            hour_end = window_end_dt.hour
+        else:
+            hour_end = (window_end_dt.hour + 1) % 24
 
         # Dátum különbség napokban
         days_diff = (prediction_datetime.date() - now.date()).days
@@ -374,12 +388,15 @@ class SiloPredictor:
         else:
             date_str = prediction_datetime.strftime('%Y-%m-%d')
 
+        # Pontos idő zárójelben
+        exact_time = prediction_datetime.strftime('%H:%M')
+
         # Időablak formázás
-        if hour_end > hour_start:
-            time_window = f"{hour_start:02d}-{hour_end:02d} óra között"
+        if hour_end > hour_start or (hour_end == 0 and hour_start == 22):  # Éjféli átlépés: 22-00
+            time_window = f"{hour_start:02d}-{hour_end:02d} óra között (~{exact_time})"
         else:
-            # Éjféli átlépés esetén
-            time_window = f"{hour_start:02d}-{hour_end:02d} óra között (éjféli átlépéssel)"
+            # Normál éjféli átlépés
+            time_window = f"{hour_start:02d}-{hour_end:02d} óra között (~{exact_time}, éjféli átlépés)"
 
         return f"{date_str} {time_window}"
 
