@@ -1,6 +1,6 @@
 name: "Silo Prediction"
 description: "Advanced silo empty prediction with 3-hour sampling, growth correction and instant prediction - Multi-silo support"
-version: "5.5.0"
+version: "5.5.1"
 slug: "silo_prediction"
 init: false
 arch:
