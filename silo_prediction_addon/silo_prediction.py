@@ -157,36 +157,44 @@ class SiloPredictor:
             logger.error(f"❌ [{self.sensor_name}] API hiba: {e}")
             return []
 
-    def sample_hourly_data(self, data: List[Tuple[datetime, float]]) -> List[Tuple[datetime, float]]:
-        """Óránkénti mintavételezés az adatokból"""
+    def sample_hourly_data(self, data: List[Tuple[datetime, float]], interval_hours: int = 3) -> List[Tuple[datetime, float]]:
+        """
+        Mintavételezés az adatokból megadott órás intervallumon
+
+        Args:
+            data: Nyers adatok
+            interval_hours: Mintavételezési intervallum órákban (alapértelmezett: 3)
+        """
         if not data:
             return []
 
-        hourly_data = []
-        current_hour = None
-        hour_values = []
+        sampled_data = []
+        current_interval = None
+        interval_values = []
 
         for timestamp, weight in data:
-            hour = timestamp.replace(minute=0, second=0, microsecond=0)
+            # Intervallumos bucket számítása
+            hour_bucket = (timestamp.hour // interval_hours) * interval_hours
+            interval_timestamp = timestamp.replace(hour=hour_bucket, minute=0, second=0, microsecond=0)
 
-            if current_hour is None:
-                current_hour = hour
+            if current_interval is None:
+                current_interval = interval_timestamp
 
-            if hour == current_hour:
-                hour_values.append(weight)
+            if interval_timestamp == current_interval:
+                interval_values.append(weight)
             else:
-                if hour_values:
-                    avg_weight = np.mean(hour_values)
-                    hourly_data.append((current_hour, avg_weight))
-                current_hour = hour
-                hour_values = [weight]
+                if interval_values:
+                    avg_weight = np.mean(interval_values)
+                    sampled_data.append((current_interval, avg_weight))
+                current_interval = interval_timestamp
+                interval_values = [weight]
 
-        if hour_values and current_hour:
-            avg_weight = np.mean(hour_values)
-            hourly_data.append((current_hour, avg_weight))
+        if interval_values and current_interval:
+            avg_weight = np.mean(interval_values)
+            sampled_data.append((current_interval, avg_weight))
 
-        logger.info(f"📈 [{self.sensor_name}] {len(hourly_data)} óránkénti adatpont mintavételezve")
-        return hourly_data
+        logger.info(f"📈 [{self.sensor_name}] {len(sampled_data)} adatpont mintavételezve ({interval_hours} órás intervallum)")
+        return sampled_data
 
     def detect_refills(self, data: List[Tuple[datetime, float]]) -> Tuple[List[Tuple[datetime, float]], Optional[datetime]]:
         """
@@ -235,11 +243,12 @@ class SiloPredictor:
             Prediction dictionary vagy None
         """
 
-        # Ellenőrizzük, hogy éppen most van-e feltöltés (utolsó 2 órában)
+        # Ellenőrizzük, hogy éppen most van-e feltöltés (utolsó 15 percben)
         if last_refill_time:
             time_since_refill = (datetime.now(LOCAL_TZ) - last_refill_time).total_seconds() / 3600
-            if time_since_refill < 2:  # 2 órán belül volt feltöltés
-                logger.info(f"🔄 [{self.sensor_name}] Feltöltés folyamatban ({time_since_refill:.1f} órája)")
+            if time_since_refill < 0.25:  # 15 perc = 0.25 óra
+                minutes_since = int(time_since_refill * 60)
+                logger.info(f"🔄 [{self.sensor_name}] Feltöltés folyamatban ({minutes_since} perce)")
                 return {
                     'prediction_date': None,
                     'days_until_empty': None,
@@ -248,20 +257,30 @@ class SiloPredictor:
                     'current_weight': data[-1][1] if data else None,
                     'threshold': 0,
                     'status': 'refilling',
-                    'refill_message': f'Feltöltés alatt ({time_since_refill:.0f} órája)'
+                    'refill_message': f'Feltöltés alatt ({minutes_since} perce)'
                 }
 
-        # AZONNALI előrejelzés feltöltés után (ha van előző slope és legalább 1 adatpont)
+        # AZONNALI előrejelzés 15 perc után (ha van előző slope)
+        # 3 órás mintavételezésnél: minimum 8 adatpont (24 óra) kell az új regresszióhoz
         use_previous_slope = False
-        if len(data) < 24:
-            if self.previous_slope is not None and len(data) >= 1:
+        if len(data) < 8:  # 8 * 3 óra = 24 óra
+            if self.previous_slope is not None:
                 logger.info(f"⚡ [{self.sensor_name}] Feltöltés utáni azonnali előrejelzés! "
-                           f"({len(data)} óra adat, előző slope: {self.previous_slope:.4f} kg/óra)")
+                           f"({len(data)} adatpont, előző slope: {self.previous_slope:.4f} kg/óra)")
                 use_previous_slope = True
             else:
-                logger.warning(f"❌ [{self.sensor_name}] Nincs elég adat az előrejelzéshez "
-                             f"(minimum 24 óra vagy előző slope kell, {len(data)} van)")
-                return None
+                logger.warning(f"⏳ [{self.sensor_name}] Adatra vár "
+                             f"(minimum 8 adatpont vagy előző slope kell, {len(data)} van)")
+                return {
+                    'prediction_date': None,
+                    'days_until_empty': None,
+                    'slope': None,
+                    'r_squared': None,
+                    'current_weight': data[-1][1] if data else None,
+                    'threshold': 0,
+                    'status': 'waiting_for_data',
+                    'message': 'Adatra vár'
+                }
 
         timestamps = [t for t, w in data]
         weights = [w for t, w in data]
@@ -460,7 +479,8 @@ class SiloPredictor:
         return f"{date_str} {time_window}", hours_until_midpoint
 
     def _calculate_with_growth_correction(self, current_weight: float, base_slope: float,
-                                          current_hours: float, animal_age_days: float) -> float:
+                                          current_hours: float, animal_age_days: float,
+                                          step_hours: int = 3) -> float:
         """
         Növekedési korrekciós számítás - iteratív megoldás
 
@@ -471,14 +491,15 @@ class SiloPredictor:
             base_slope: Lineáris regresszió meredeksége (kg/óra) - NEGATÍV!
             current_hours: Eltelt órák száma a mérési kezdet óta
             animal_age_days: Állatok jelenlegi életkora napokban
+            step_hours: Szimulációs lépésköz órákban (alapértelmezett: 3)
 
         Returns:
             Hátralévő órák száma a 0 kg eléréséig
         """
-        # Iteratív számítás - óránkénti szimulációval
+        # Iteratív számítás - 3 órás lépésekkel
         weight = current_weight
         hours_elapsed = 0
-        max_iterations = 10000  # Maximum ~416 nap
+        max_iterations = 10000 // step_hours  # Maximum ~416 nap (3 órás lépésekkel)
 
         # Jelenlegi nap
         current_day = animal_age_days
@@ -487,31 +508,33 @@ class SiloPredictor:
         logger.info(f"   Kezdeti súly: {current_weight:.1f} kg")
         logger.info(f"   Alapmeredekség: {base_slope:.4f} kg/óra")
         logger.info(f"   Állat életkor: {animal_age_days:.1f} nap")
+        logger.info(f"   Szimulációs lépésköz: {step_hours} óra")
 
-        while weight > 0 and hours_elapsed < max_iterations:
+        iteration = 0
+        while weight > 0 and iteration < max_iterations:
             # Aktuális nap (az állatokéhoz képest)
             day_in_cycle = current_day + (hours_elapsed / 24.0)
 
-            # Óránkénti fogyás = alap fogyás + növekedési korrekció
-            # Növekedési korrekció: napi kb. 0.201 g/óra/nap = 0.000201 kg/óra/nap
+            # Növekedési korrekció az aktuális napra
             growth_adjustment = self.growth_rate_kg_per_hour_per_day * day_in_cycle
 
             # Teljes óránkénti fogyás (negatív, ezért a growth_adjustment CSÖKKENTI)
             hourly_consumption = base_slope - growth_adjustment
 
-            # Súly csökkentése
-            weight += hourly_consumption  # hourly_consumption negatív, tehát csökkenti a súlyt
+            # Súly csökkentése (step_hours órányira)
+            weight += hourly_consumption * step_hours
 
-            hours_elapsed += 1
+            hours_elapsed += step_hours
+            iteration += 1
 
-            # Debug log minden 100 óránként
-            if hours_elapsed % 100 == 0:
+            # Debug log minden 100 iterációnként (~300 óra)
+            if iteration % 100 == 0:
                 logger.debug(f"   {hours_elapsed}h: súly={weight:.1f} kg, "
                            f"napi_pozíció={day_in_cycle:.1f}, korrekció={growth_adjustment:.6f} kg/óra")
 
-        if hours_elapsed >= max_iterations:
-            logger.warning(f"⚠️ [{self.sensor_name}] Szimulációs limit elérve ({max_iterations} óra)")
-            return max_iterations
+        if iteration >= max_iterations:
+            logger.warning(f"⚠️ [{self.sensor_name}] Szimulációs limit elérve ({max_iterations} iteráció)")
+            return hours_elapsed
 
         logger.info(f"✅ [{self.sensor_name}] Szimulációs eredmény: {hours_elapsed} óra ({hours_elapsed/24:.1f} nap)")
 
@@ -534,9 +557,11 @@ class SiloPredictor:
         prediction_date = prediction_data.get('prediction_date')
         status = prediction_data.get('status', 'unknown')
 
-        # Feltöltés alatt speciális üzenet
+        # Speciális üzenetek
         if status == 'refilling':
             state = "Feltöltés alatt"
+        elif status == 'waiting_for_data':
+            state = "Adatra vár"
         else:
             state = prediction_date if prediction_date else status
 
