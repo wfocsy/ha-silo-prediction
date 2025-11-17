@@ -323,7 +323,8 @@ class SiloPredictor:
         # Előrejelzés lokális időben
         prediction_datetime = datetime.now(LOCAL_TZ) + timedelta(hours=hours_from_now)
 
-        formatted_date = prediction_datetime.strftime('%Y-%m-%d %H:%M')
+        # Formázott dátum időablakkal (±1 óra)
+        formatted_date = self._format_prediction_with_window(prediction_datetime)
 
         logger.info(f"📅 [{self.sensor_name}] 0 kg előrejelzés: {formatted_date}")
         logger.info(f"⏱️ [{self.sensor_name}] Hátralévő idő: {days_until:.1f} nap")
@@ -338,6 +339,49 @@ class SiloPredictor:
             'status': 'emptying',
             'growth_correction_enabled': self.enable_growth_correction
         }
+
+    def _format_prediction_with_window(self, prediction_datetime: datetime) -> str:
+        """
+        Formázza az előrejelzést időablakkal (±1 óra)
+
+        Formátum:
+        - Ma 14-16 óra között
+        - Holnap 10-12 óra között
+        - 2025-12-15 18-20 óra között
+
+        Args:
+            prediction_datetime: Előrejelzett időpont
+
+        Returns:
+            Formázott string időablakkal
+        """
+        now = datetime.now(LOCAL_TZ)
+
+        # Kerekítés órára (alsó határ)
+        hour_start = prediction_datetime.hour
+        hour_end = (hour_start + 2) % 24  # +2 óra ablak
+
+        # Dátum különbség napokban
+        days_diff = (prediction_datetime.date() - now.date()).days
+
+        # Relatív dátum formázás
+        if days_diff == 0:
+            date_str = "Ma"
+        elif days_diff == 1:
+            date_str = "Holnap"
+        elif days_diff == 2:
+            date_str = "Holnapután"
+        else:
+            date_str = prediction_datetime.strftime('%Y-%m-%d')
+
+        # Időablak formázás
+        if hour_end > hour_start:
+            time_window = f"{hour_start:02d}-{hour_end:02d} óra között"
+        else:
+            # Éjféli átlépés esetén
+            time_window = f"{hour_start:02d}-{hour_end:02d} óra között (éjféli átlépéssel)"
+
+        return f"{date_str} {time_window}"
 
     def _calculate_with_growth_correction(self, current_weight: float, base_slope: float,
                                           current_hours: float, animal_age_days: float) -> float:
