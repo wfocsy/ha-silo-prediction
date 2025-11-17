@@ -358,14 +358,17 @@ class SiloPredictor:
         prediction_datetime = datetime.now(LOCAL_TZ) + timedelta(hours=hours_from_now)
 
         # Formázott dátum időablakkal (±1 óra)
-        formatted_date = self._format_prediction_with_window(prediction_datetime)
+        formatted_date, window_midpoint_hours = self._format_prediction_with_window(prediction_datetime)
+
+        # Hátralévő idő az időablak KÖZEPÉIG (nem a pontos időig!)
+        days_until_midpoint = window_midpoint_hours / 24
 
         logger.info(f"📅 [{self.sensor_name}] 0 kg előrejelzés: {formatted_date}")
-        logger.info(f"⏱️ [{self.sensor_name}] Hátralévő idő: {days_until:.1f} nap")
+        logger.info(f"⏱️ [{self.sensor_name}] Hátralévő idő (ablak közepéig): {days_until_midpoint:.1f} nap")
 
         return {
             'prediction_date': formatted_date,
-            'days_until_empty': round(days_until, 2),
+            'days_until_empty': round(days_until_midpoint, 2),
             'slope': round(slope, 2),
             'r_squared': round(r_squared, 4),
             'current_weight': round(current_weight, 0),
@@ -374,7 +377,7 @@ class SiloPredictor:
             'growth_correction_enabled': self.enable_growth_correction
         }
 
-    def _format_prediction_with_window(self, prediction_datetime: datetime) -> str:
+    def _format_prediction_with_window(self, prediction_datetime: datetime) -> Tuple[str, float]:
         """
         Formázza az előrejelzést időablakkal (±1 óra, kerekítve)
 
@@ -389,7 +392,8 @@ class SiloPredictor:
             prediction_datetime: Előrejelzett időpont
 
         Returns:
-            Formázott string időablakkal és pontos idővel zárójelben
+            Tuple: (formatted_string, hours_until_midpoint)
+                   hours_until_midpoint: Órák száma az időablak közepéig
         """
         now = datetime.now(LOCAL_TZ)
 
@@ -408,6 +412,27 @@ class SiloPredictor:
             hour_end = window_end_dt.hour
         else:
             hour_end = (window_end_dt.hour + 1) % 24
+
+        # Időablak középpontja (órában)
+        midpoint_hour = (hour_start + hour_end) / 2
+        if hour_end < hour_start:  # Éjféli átlépés
+            midpoint_hour = (hour_start + hour_end + 24) / 2
+            if midpoint_hour >= 24:
+                midpoint_hour -= 24
+
+        # Időablak középpontjának datetime objektuma
+        midpoint_date = prediction_datetime.date()
+        if hour_end < hour_start and midpoint_hour < 12:  # Éjféli átlépés, középpont már másnapra esik
+            midpoint_date = (prediction_datetime + timedelta(days=1)).date()
+
+        window_midpoint = datetime.combine(midpoint_date, datetime.min.time()).replace(
+            hour=int(midpoint_hour),
+            minute=int((midpoint_hour - int(midpoint_hour)) * 60),
+            tzinfo=LOCAL_TZ
+        )
+
+        # Órák száma a középpontig
+        hours_until_midpoint = (window_midpoint - now).total_seconds() / 3600
 
         # Dátum különbség napokban
         days_diff = (prediction_datetime.date() - now.date()).days
@@ -432,7 +457,7 @@ class SiloPredictor:
             # Normál éjféli átlépés
             time_window = f"{hour_start:02d}-{hour_end:02d} óra között (~{exact_time}, éjféli átlépés)"
 
-        return f"{date_str} {time_window}"
+        return f"{date_str} {time_window}", hours_until_midpoint
 
     def _calculate_with_growth_correction(self, current_weight: float, base_slope: float,
                                           current_hours: float, animal_age_days: float) -> float:
