@@ -188,12 +188,19 @@ class SiloPredictor:
         logger.info(f"📈 [{self.sensor_name}] {len(hourly_data)} óránkénti adatpont mintavételezve")
         return hourly_data
 
-    def detect_refills(self, data: List[Tuple[datetime, float]]) -> List[Tuple[datetime, float]]:
-        """Feltöltések detektálása és csak az utolsó feltöltés UTÁNI adatok megtartása"""
+    def detect_refills(self, data: List[Tuple[datetime, float]]) -> Tuple[List[Tuple[datetime, float]], Optional[datetime]]:
+        """
+        Feltöltések detektálása és csak az utolsó feltöltés UTÁNI adatok megtartása
+
+        Returns:
+            Tuple: (cleaned_data, last_refill_timestamp)
+                   last_refill_timestamp: None ha nem volt feltöltés, különben az utolsó feltöltés időpontja
+        """
         if len(data) < 2:
-            return data
+            return data, None
 
         last_refill_index = -1
+        last_refill_timestamp = None
 
         for i in range(1, len(data)):
             prev_weight = data[i-1][1]
@@ -204,6 +211,7 @@ class SiloPredictor:
                 logger.info(f"🔄 [{self.sensor_name}] Feltöltés detektálva: {data[i-1][0]} -> {data[i][0]}, "
                            f"Súlyváltozás: +{weight_change:.0f}kg")
                 last_refill_index = i
+                last_refill_timestamp = data[i][0]
 
         if last_refill_index >= 0:
             cleaned_data = data[last_refill_index:]
@@ -212,17 +220,43 @@ class SiloPredictor:
             cleaned_data = data
             logger.info(f"✅ [{self.sensor_name}] Nem volt feltöltés, {len(cleaned_data)} adatpont használva")
 
-        return cleaned_data
+        return cleaned_data, last_refill_timestamp
 
-    def calculate_prediction(self, data: List[Tuple[datetime, float]]) -> Optional[Dict]:
-        """Előrejelzés készítése lineáris regresszióval (opcionális növekedési korrekcióval)"""
+    def calculate_prediction(self, data: List[Tuple[datetime, float]],
+                             last_refill_time: Optional[datetime] = None) -> Optional[Dict]:
+        """
+        Előrejelzés készítése lineáris regresszióval (opcionális növekedési korrekcióval)
 
-        # Ha kevés adat van, de van előző slope, használjuk azt
+        Args:
+            data: Súly adatok (timestamp, weight) párok
+            last_refill_time: Utolsó feltöltés időpontja (None ha nem volt)
+
+        Returns:
+            Prediction dictionary vagy None
+        """
+
+        # Ellenőrizzük, hogy éppen most van-e feltöltés (utolsó 2 órában)
+        if last_refill_time:
+            time_since_refill = (datetime.now(LOCAL_TZ) - last_refill_time).total_seconds() / 3600
+            if time_since_refill < 2:  # 2 órán belül volt feltöltés
+                logger.info(f"🔄 [{self.sensor_name}] Feltöltés folyamatban ({time_since_refill:.1f} órája)")
+                return {
+                    'prediction_date': None,
+                    'days_until_empty': None,
+                    'slope': None,
+                    'r_squared': None,
+                    'current_weight': data[-1][1] if data else None,
+                    'threshold': 0,
+                    'status': 'refilling',
+                    'refill_message': f'Feltöltés alatt ({time_since_refill:.0f} órája)'
+                }
+
+        # AZONNALI előrejelzés feltöltés után (ha van előző slope és legalább 1 adatpont)
         use_previous_slope = False
         if len(data) < 24:
-            if self.previous_slope is not None and len(data) >= 2:
-                logger.info(f"⚠️ [{self.sensor_name}] Kevés adat ({len(data)} óra < 24 óra), "
-                           f"előző ciklus slope-ját használom: {self.previous_slope:.4f} kg/óra")
+            if self.previous_slope is not None and len(data) >= 1:
+                logger.info(f"⚡ [{self.sensor_name}] Feltöltés utáni azonnali előrejelzés! "
+                           f"({len(data)} óra adat, előző slope: {self.previous_slope:.4f} kg/óra)")
                 use_previous_slope = True
             else:
                 logger.warning(f"❌ [{self.sensor_name}] Nincs elég adat az előrejelzéshez "
@@ -475,7 +509,11 @@ class SiloPredictor:
         prediction_date = prediction_data.get('prediction_date')
         status = prediction_data.get('status', 'unknown')
 
-        state = prediction_date if prediction_date else status
+        # Feltöltés alatt speciális üzenet
+        if status == 'refilling':
+            state = "Feltöltés alatt"
+        else:
+            state = prediction_date if prediction_date else status
 
         attributes = {
             'prediction_date': prediction_date,
@@ -569,8 +607,8 @@ class SiloPredictor:
                 return
 
             hourly_data = self.sample_hourly_data(raw_data)
-            cleaned_data = self.detect_refills(hourly_data)
-            prediction = self.calculate_prediction(cleaned_data)
+            cleaned_data, last_refill_time = self.detect_refills(hourly_data)
+            prediction = self.calculate_prediction(cleaned_data, last_refill_time)
 
             if prediction:
                 self.update_sensor(prediction)
