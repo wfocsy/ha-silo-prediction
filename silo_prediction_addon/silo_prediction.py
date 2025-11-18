@@ -759,7 +759,7 @@ class SiloPredictor:
         """
         params = {
             'type': 'history',
-            'entity_id': self.weight_sensor,
+            'entity_id': self.entity_id,
             'start_time': start_time.isoformat(),
             'end_time': end_time.isoformat()
         }
