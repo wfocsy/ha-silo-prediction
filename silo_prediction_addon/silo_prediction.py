@@ -1528,6 +1528,10 @@ class MultiSiloManager:
         - Normál: 24 óránként
         - Feltöltés után: 20 perc várakozás, majd AZONNALI frissítés
         """
+        # Várakozás Home Assistant core felállására (502 Bad Gateway elkerülése)
+        logger.info("⏳ Várakozás 30 másodpercet a Home Assistant core indulására...")
+        time.sleep(30)
+
         logger.info("🔄 Multi-Silo Prediction szolgáltatás indítva")
         logger.info(f"📊 Normál frissítési intervallum: {self.update_interval / 3600:.0f} óra")
         logger.info(f"⚡ Feltöltés utáni frissítés: 20 perc várakozás után")

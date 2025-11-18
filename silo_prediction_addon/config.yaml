@@ -1,6 +1,6 @@
 name: "Silo Prediction"
 description: "Advanced silo empty prediction with technological feed data, 6-hourly sampling (4x/day), intelligent dual-mode cycle detection, and real-time refilling detection (5-min window) - Multi-silo support"
-version: "6.5.1"
+version: "6.5.2"
 slug: "silo_prediction"
 init: false
 arch:
