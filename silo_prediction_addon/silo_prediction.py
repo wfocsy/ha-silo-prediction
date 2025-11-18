@@ -771,12 +771,17 @@ class SiloPredictor:
         if last_refill_index > 0:
             cleaned_data = data[last_refill_index:]
             logger.info(f"📊 [{self.sensor_name}] Exponenciális módszer: utolsó feltöltés utáni {len(cleaned_data)} adatpont")
+
+            # Ha kevés adat van feltöltés után, használjunk MINDEN adatot
+            if len(cleaned_data) < 3:
+                logger.warning(f"⚠️ [{self.sensor_name}] Kevés adat felt öltés után ({len(cleaned_data)}), MINDEN adat használata...")
+                cleaned_data = data
         else:
             cleaned_data = data
             logger.info(f"📊 [{self.sensor_name}] Exponenciális módszer: {len(cleaned_data)} adatpont (nincs feltöltés)")
 
         if len(cleaned_data) < 3:
-            logger.warning(f"❌ [{self.sensor_name}] Exponenciális fallback: kevés adat feltöltés után")
+            logger.warning(f"❌ [{self.sensor_name}] Exponenciális fallback: kevés adat összesen ({len(cleaned_data)})")
             return None
 
         # 3. Lineáris regresszió (súly ~ idő)
