@@ -416,15 +416,16 @@ class SiloPredictor:
                                f"+{weight_change:.0f} kg → súly: {data[i][1]:.0f} kg")
                     break
 
-        # 2. FALLBACK: Ha nincs csend periódus, keresünk nagy (10000kg+) feltöltést
+        # 2. FALLBACK: Ha nincs csend periódus, keresünk nagy (5000kg+) feltöltést
         if first_refill_index < 0:
             logger.info(f"🔍 [{self.sensor_name}] Csend periódus nem található, alternatív módszer: nagy feltöltés keresése...")
 
             for i in range(1, len(data)):
                 weight_change = data[i][1] - data[i-1][1]
 
-                # Nagy feltöltés (10000kg+) = valószínűleg ciklus kezdő feltöltés
-                if weight_change > 10000:
+                # Nagy feltöltés (5000kg+) = valószínűleg ciklus kezdő feltöltés
+                # Csökkentve 10000-ről 5000-re, mert a purge_keep_days=10 miatt nincs elég adat a csend periódus detektáláshoz
+                if weight_change > 5000:
                     first_refill_index = i
                     logger.info(f"📍 [{self.sensor_name}] NAGY FELTÖLTÉS detektálva (ciklus kezdet): {data[i][0].strftime('%Y-%m-%d')}, "
                                f"+{weight_change:.0f} kg → súly: {data[i][1]:.0f} kg")
@@ -742,6 +743,305 @@ class SiloPredictor:
             'status': 'emptying',
             'tech_data_used': True
         }
+
+    def resample_5min(self, start_time: datetime, end_time: datetime) -> List[Tuple[datetime, float]]:
+        """
+        5 perces mintavételezés CSAK feltöltés detektáláshoz
+
+        NEM használjuk predikciós görbéhez!
+
+        Args:
+            start_time: Kezdő időpont
+            end_time: Vég időpont
+
+        Returns:
+            [(timestamp, weight), ...] 5 percenként
+        """
+        params = {
+            'type': 'history',
+            'entity_id': self.weight_sensor,
+            'start_time': start_time.isoformat(),
+            'end_time': end_time.isoformat()
+        }
+
+        response = self._make_ha_request('GET', '/api/history/period', params=params)
+        if not response:
+            return []
+
+        history = response.json()
+        if not history or len(history) == 0:
+            return []
+
+        # Összes adat
+        all_data = []
+        for record in history[0]:
+            try:
+                state = record.get('state')
+                if state in ['unavailable', 'unknown', 'None', None, '']:
+                    continue
+
+                weight = float(state)
+                last_changed = record.get('last_changed')
+                timestamp = datetime.fromisoformat(last_changed.replace('Z', '+00:00'))
+                all_data.append((timestamp, weight))
+            except (ValueError, TypeError, AttributeError):
+                continue
+
+        if not all_data:
+            return []
+
+        # 5 perces mintavételezés
+        all_data.sort(key=lambda x: x[0])
+        timestamps = np.array([t for t, _ in all_data])
+        weights = np.array([w for _, w in all_data])
+
+        resampled = []
+        current = start_time.replace(second=0, microsecond=0)
+        current = current.replace(minute=(current.minute // 5) * 5)  # 5 perces kerekítés
+
+        while current <= end_time:
+            window_start = current - timedelta(minutes=2.5)
+            window_end = current + timedelta(minutes=2.5)
+
+            mask = (timestamps >= window_start) & (timestamps <= window_end)
+            if np.any(mask):
+                avg_weight = np.mean(weights[mask])
+                resampled.append((current, avg_weight))
+
+            current += timedelta(minutes=5)
+
+        return resampled
+
+    def detect_refill_completion(self, data_5min: List[Tuple[datetime, float]]) -> Tuple[bool, Optional[datetime]]:
+        """
+        Feltöltés befejezés detektálás
+
+        Ha 10 percig (2x5 perc) nincs 100kg+ emelkedés → vége
+
+        Args:
+            data_5min: 5 perces mintavételezett adatok
+
+        Returns:
+            (refill_in_progress, refill_end_time)
+        """
+        if len(data_5min) < 3:
+            return False, None
+
+        # Utolsó 30 perc adatai (6x5 perc)
+        recent = data_5min[-6:]
+
+        # Keressük az utolsó jelentős emelkedést (100kg+)
+        last_increase_idx = -1
+        for i in range(1, len(recent)):
+            weight_change = recent[i][1] - recent[i-1][1]
+            if weight_change > 100:  # 100kg+ emelkedés
+                last_increase_idx = i
+
+        # Ha nincs emelkedés az utolsó 30 percben → nincs feltöltés
+        if last_increase_idx == -1:
+            return False, None
+
+        # Ha az utolsó emelkedés 10+ perce volt → feltöltés vége
+        time_since_last = len(recent) - 1 - last_increase_idx
+        if time_since_last >= 2:  # 2x5 perc = 10 perc
+            refill_end_time = recent[last_increase_idx][0]
+            return False, refill_end_time
+
+        # Feltöltés folyamatban
+        return True, None
+
+    def check_active_refill(self) -> Tuple[bool, Optional[datetime], Optional[float]]:
+        """
+        Ellenőrzi, hogy most folyik-e aktív feltöltés (5 perces mintavételezéssel)
+
+        Returns:
+            (is_refilling, refill_end_time, current_weight)
+        """
+        now = datetime.now(LOCAL_TZ)
+        start_time = now - timedelta(minutes=30)  # Utolsó 30 perc
+
+        # 5 perces mintavételezés
+        data_5min = self.resample_5min(start_time, now)
+
+        if not data_5min:
+            return False, None, None
+
+        current_weight = data_5min[-1][1]
+
+        # Feltöltés detektálás
+        is_refilling, refill_end = self.detect_refill_completion(data_5min)
+
+        if is_refilling:
+            logger.info(f"🔄 [{self.sensor_name}] AKTÍV FELTÖLTÉS FOLYAMATBAN")
+            return True, None, current_weight
+
+        if refill_end:
+            logger.info(f"✅ [{self.sensor_name}] Feltöltés befejezve: {refill_end.strftime('%Y-%m-%d %H:%M')}")
+            return False, refill_end, current_weight
+
+        return False, None, current_weight
+
+    def calculate_exp_constant(self, normalized_curve: List[Tuple[datetime, float]]) -> Tuple[float, float, float]:
+        """
+        Exponenciális állandó számítása normalizált görbéből
+
+        24 órás ablakokból (4x6h adatpont) napi fogyási rátákat számol,
+        majd lineáris regresszióval meghatározza a gyorsulást.
+
+        Args:
+            normalized_curve: [(timestamp, normalized_weight), ...] 6 óránként
+
+        Returns:
+            (exp_constant, base_rate, acceleration)
+        """
+        if len(normalized_curve) < 8:  # Min 2 nap x 4 adatpont
+            logger.warning(f"❌ [{self.sensor_name}] Exp állandó: kevés adat ({len(normalized_curve)} pont)")
+            return 0.0, 0.0, 0.0
+
+        # Napi fogyási ráták számítása 24 órás ablakokból
+        daily_rates = []
+        days = []
+
+        for i in range(4, len(normalized_curve)):  # 4 pont = 24 óra
+            prev_time, prev_weight = normalized_curve[i-4]
+            curr_time, curr_weight = normalized_curve[i]
+
+            # Napi fogyás (lehet negatív a normalizált görbében!)
+            daily_consumption = prev_weight - curr_weight
+            if daily_consumption < 0:
+                daily_consumption = abs(daily_consumption)
+
+            # Csak értelmes fogyásokat vegyük figyelembe
+            if daily_consumption > 10:  # Min 10 kg/nap
+                daily_rates.append(daily_consumption)
+                days.append(i / 4.0)  # Nap index (4 adatpont = 1 nap)
+
+        if len(daily_rates) < 3:
+            logger.warning(f"⚠️ [{self.sensor_name}] Exp állandó: kevés napi adat ({len(daily_rates)})")
+            return 0.0, 0.0, 0.0
+
+        # Lineáris regresszió: fogyási ráta változása az időben
+        rates_array = np.array(daily_rates)
+        days_array = np.array(days)
+
+        slope, intercept, r_value, _, _ = stats.linregress(days_array, rates_array)
+
+        # Exponenciális állandó = gyorsulás / átlag ráta
+        avg_rate = np.mean(rates_array)
+        exp_constant = slope / avg_rate if avg_rate > 0 else 0.0
+
+        logger.info(f"📈 [{self.sensor_name}] Exp állandó: {exp_constant:.6f}, "
+                   f"alap ráta: {avg_rate:.1f} kg/nap, gyorsulás: {slope:.2f} kg/nap²")
+
+        return exp_constant, avg_rate, slope
+
+    def predict_with_tech_and_exp(self, current_real_weight: float, cycle_start: datetime,
+                                   bird_count: int, base_rate: float, acceleration: float) -> Tuple[datetime, float]:
+        """
+        ELSŐDLEGES: Tech adat + Exponenciális predikció (VAN 0. nap)
+
+        Iteratív szimuláció:
+        - Tech napi fogyasztás (madárszám × tech g/nap)
+        - Exponenciális korrekció (gyorsulás figyelembevételével)
+        - Valós jelenlegi súlyból indul
+
+        Args:
+            current_real_weight: Jelenlegi valós súly (kg)
+            cycle_start: 0. nap időpontja
+            bird_count: Madárszám
+            base_rate: Alap fogyási ráta (kg/nap)
+            acceleration: Gyorsulás (kg/nap²)
+
+        Returns:
+            (prediction_datetime, days_until)
+        """
+        weight = current_real_weight
+        current_time = datetime.now(LOCAL_TZ)
+
+        # Jelenlegi nevelési nap
+        current_day = (current_time - cycle_start).days
+
+        hours = 0
+        day = current_day
+        max_days = 60  # Max 60 nap előre
+
+        logger.info(f"🎯 [{self.sensor_name}] Tech+Exp predikció: súly={weight:.0f} kg, "
+                   f"nap={day}, madár={bird_count:,}")
+
+        while weight > 0 and day < current_day + max_days:
+            # Tech adat: g/madár/nap
+            tech_per_bird_g = self.tech_data.get_daily_intake_per_bird(day)
+            tech_daily_kg = (tech_per_bird_g * bird_count) / 1000.0
+
+            # Exponenciális korrekció
+            days_elapsed = day - current_day
+            current_rate = base_rate + (acceleration * days_elapsed)
+            exp_factor = current_rate / base_rate if base_rate > 0 else 1.0
+
+            # Korrigált napi fogyás
+            actual_daily_kg = tech_daily_kg * exp_factor
+
+            # Óránkénti fogyás
+            hourly_kg = actual_daily_kg / 24.0
+            weight -= hourly_kg
+            hours += 1
+
+            if hours % 24 == 0:
+                day += 1
+
+        prediction_time = current_time + timedelta(hours=hours)
+        days_until = hours / 24.0
+
+        logger.info(f"📅 [{self.sensor_name}] Tech+Exp: {prediction_time.strftime('%b %d, %H:%M')} "
+                   f"({days_until:.1f} nap)")
+
+        return prediction_time, days_until
+
+    def predict_with_exp_only(self, current_real_weight: float, normalized_curve: List[Tuple[datetime, float]],
+                               base_rate: float, acceleration: float) -> Tuple[datetime, float]:
+        """
+        FALLBACK: Csak exponenciális predikció (NINCS 0. nap)
+
+        Gyorsuló lineáris extrapoláció a történelmi adatokból.
+
+        Args:
+            current_real_weight: Jelenlegi valós súly (kg)
+            normalized_curve: Normalizált görbe
+            base_rate: Alap fogyási ráta (kg/nap)
+            acceleration: Gyorsulás (kg/nap²)
+
+        Returns:
+            (prediction_datetime, days_until)
+        """
+        weight = current_real_weight
+        current_time = datetime.now(LOCAL_TZ)
+
+        hours = 0
+        current_rate = base_rate
+        max_days = 60
+
+        logger.info(f"🎯 [{self.sensor_name}] Exp-only predikció: súly={weight:.0f} kg, "
+                   f"ráta={base_rate:.1f} kg/nap, gyorsulás={acceleration:.2f}")
+
+        while weight > 0 and hours < (max_days * 24):
+            # Napi fogyás (gyorsuló)
+            daily_kg = current_rate
+            hourly_kg = daily_kg / 24.0
+
+            weight -= hourly_kg
+            hours += 1
+
+            # Naponta növeljük a rátát a gyorsulással
+            if hours % 24 == 0:
+                current_rate += acceleration
+
+        prediction_time = current_time + timedelta(hours=hours)
+        days_until = hours / 24.0
+
+        logger.info(f"📅 [{self.sensor_name}] Exp-only: {prediction_time.strftime('%b %d, %H:%M')} "
+                   f"({days_until:.1f} nap)")
+
+        return prediction_time, days_until
 
     def calculate_prediction_exponential_fallback(self, data: List[Tuple[datetime, float]]) -> Optional[Dict]:
         """
@@ -1301,44 +1601,24 @@ class SiloPredictor:
                 logger.warning(f"⚠️ [{self.sensor_name}] Nincs adat")
                 return
 
-            # 3. AKTÍV FELTÖLTÉS ELLENŐRZÉS (NYERS adatokból!)
-            # EGYSZERŰ LOGIKA: Ha az utolsó 5 percben >30 kg emelkedés volt → FELTÖLTÉS ALATT
-            if len(raw_data) >= 5:
-                # Utolsó 5 perc adatai
-                recent_raw = raw_data[-5:]  # Utolsó ~5-10 perc (ha ~1-2 percenként jön adat)
+            # 2. AKTÍV FELTÖLTÉS ELLENŐRZÉS (5 perces mintavételezéssel)
+            is_refilling, refill_end, current_weight = self.check_active_refill()
 
-                # Keresünk az utolsó 5 percben 30 kg-nál nagyobb emelkedést
-                max_weight_increase = 0
-                for i in range(1, len(recent_raw)):
-                    weight_change = recent_raw[i][1] - recent_raw[i-1][1]
-                    if weight_change > max_weight_increase:
-                        max_weight_increase = weight_change
+            if is_refilling:
+                # Feltöltés alatt szenzor frissítése
+                refilling_data = {
+                    'prediction_date': 'Feltöltés alatt',
+                    'days_until_empty': None,
+                    'current_weight': current_weight,
+                    'bird_count': self.bird_count,
+                    'day_in_cycle': None,
+                    'status': 'refilling'
+                }
+                self.update_sensor(refilling_data)
+                logger.info(f"✅ [{self.sensor_name}] Feltöltés alatt szenzor frissítve")
+                return
 
-                # Ha >30 kg emelkedés az utolsó 5 percben → FELTÖLTÉS ALATT
-                if max_weight_increase > 30:
-                    current_weight = raw_data[-1][1]
-                    oldest_weight = recent_raw[0][1]
-                    total_increase = current_weight - oldest_weight
-
-                    logger.info(f"🔄 [{self.sensor_name}] AKTÍV FELTÖLTÉS DETEKTÁLVA!")
-                    logger.info(f"   Utolsó 5 perc: {recent_raw[0][0].strftime('%H:%M')} → {raw_data[-1][0].strftime('%H:%M')}")
-                    logger.info(f"   Súlyváltozás: {oldest_weight:.0f} kg → {current_weight:.0f} kg (+{total_increase:.0f} kg)")
-                    logger.info(f"   Max. ugrás: +{max_weight_increase:.0f} kg")
-
-                    # Feltöltés alatt szenzor frissítése
-                    refilling_data = {
-                        'prediction_date': 'Feltöltés alatt',
-                        'days_until_empty': None,
-                        'current_weight': current_weight,
-                        'bird_count': self.bird_count,
-                        'day_in_cycle': None,
-                        'status': 'refilling'
-                    }
-                    self.update_sensor(refilling_data)
-                    logger.info(f"✅ [{self.sensor_name}] Feltöltés alatt szenzor frissítve")
-                    return
-
-            # 2. NAPI mintavételezés (7:00-kor nap váltás)
+            # 3. 6 órás mintavételezés (predikciós görbéhez)
             daily_data = self.sample_daily_data(raw_data)
 
             if not daily_data:
@@ -1348,13 +1628,17 @@ class SiloPredictor:
             # Jelenlegi VALÓS súly (utolsó mért érték)
             current_real_weight = daily_data[-1][1]
 
-            # Alternatív feltöltés detekció: ha az utolsó adatpont alapján
-            # a súly közeli a max kapacitáshoz ÉS nincs még előrejelzés
-            if current_real_weight > self.max_capacity * 0.9:  # 90% felett
-                logger.info(f"🔄 [{self.sensor_name}] Magas súly detektálva: {current_real_weight:.0f} kg (> 90% kapacitás)")
-                logger.info(f"   Ez valószínűleg feltöltés utáni állapot, várakozás fogyasztásra...")
+            # 4. Normalizált görbe készítése (csak timestamp, weight párokat használunk)
+            normalized_simple = [(t, w) for t, w, _, _ in daily_data] if daily_data and len(daily_data[0]) == 4 else daily_data
 
-            # 4. 0. nap detektálás (ha még nincs)
+            # 5. Exponenciális állandó számítása
+            exp_constant, base_rate, acceleration = self.calculate_exp_constant(normalized_simple)
+
+            if base_rate == 0:
+                logger.warning(f"⚠️ [{self.sensor_name}] Nem sikerült exp állandót számítani")
+                return
+
+            # 6. 0. nap detektálás (ha még nincs)
             cycle_start_detected = False
             if not self.cycle_start_date:
                 cycle_start = self.detect_cycle_start(daily_data)
@@ -1366,11 +1650,11 @@ class SiloPredictor:
             else:
                 cycle_start_detected = True
 
-            # 4a. TECHNOLÓGIAI MÓDSZER (ha van 0. nap)
+            # 7. PREDIKCIÓ
             if cycle_start_detected and self.cycle_start_date:
-                logger.info(f"✅ [{self.sensor_name}] TECHNOLÓGIAI MÓDSZER használata")
+                logger.info(f"✅ [{self.sensor_name}] TECH + EXP MÓDSZER használata")
 
-                # Folyamatos görbe készítése (CSAK analízishez!)
+                # Folyamatos görbe készítése (madár számításhoz)
                 continuous_data = self.create_continuous_curve(daily_data, self.cycle_start_date)
 
                 if not continuous_data:
@@ -1381,20 +1665,60 @@ class SiloPredictor:
                 bird_counts = self.calculate_daily_bird_count(continuous_data)
 
                 if not bird_counts:
-                    logger.warning(f"⚠️ [{self.sensor_name}] Madár darabszám nem számolható")
-                    return
+                    logger.warning(f"⚠️ [{self.sensor_name}] Madár darabszám nem számolható, fallback...")
+                    # Fallback-re váltunk
+                    prediction_time, days_until = self.predict_with_exp_only(
+                        current_real_weight, normalized_simple, base_rate, acceleration
+                    )
+                else:
+                    # Átlag madárszám
+                    avg_bird_count = int(np.mean(list(bird_counts.values())))
 
-                # Előrejelzés technológiai adatokkal (VALÓS súllyal!)
-                prediction = self.calculate_prediction_with_tech_data(
-                    continuous_data,
-                    bird_counts,
-                    current_real_weight  # ← VALÓS jelenlegi súly!
+                    # Tech + Exp predikció
+                    prediction_time, days_until = self.predict_with_tech_and_exp(
+                        current_real_weight, self.cycle_start_date,
+                        avg_bird_count, base_rate, acceleration
+                    )
+
+                    # Formázott dátum
+                    formatted_date, window_midpoint_hours = self._format_prediction_with_window(prediction_time)
+                    days_until_midpoint = window_midpoint_hours / 24.0
+
+                    # Nevelési nap
+                    current_day = (datetime.now(LOCAL_TZ) - self.cycle_start_date).days
+
+                    prediction = {
+                        'prediction_date': formatted_date,
+                        'days_until_empty': round(days_until_midpoint, 2),
+                        'current_weight': round(current_real_weight, 0),
+                        'bird_count': avg_bird_count,
+                        'day_in_cycle': current_day,
+                        'status': 'emptying',
+                        'tech_data_used': True
+                    }
+
+            # 7b. EXPONENCIÁLIS FALLBACK MÓDSZER (ha nincs 0. nap)
+            else:
+                logger.info(f"⚠️ [{self.sensor_name}] EXP-ONLY FALLBACK MÓDSZER használata")
+
+                # Csak Exp predikció
+                prediction_time, days_until = self.predict_with_exp_only(
+                    current_real_weight, normalized_simple, base_rate, acceleration
                 )
 
-            # 4b. EXPONENCIÁLIS FALLBACK MÓDSZER (ha nincs 0. nap)
-            else:
-                logger.info(f"⚠️ [{self.sensor_name}] EXPONENCIÁLIS FALLBACK MÓDSZER használata")
-                prediction = self.calculate_prediction_exponential_fallback(daily_data)
+                # Formázott dátum
+                formatted_date, window_midpoint_hours = self._format_prediction_with_window(prediction_time)
+                days_until_midpoint = window_midpoint_hours / 24.0
+
+                prediction = {
+                    'prediction_date': formatted_date,
+                    'days_until_empty': round(days_until_midpoint, 2),
+                    'current_weight': round(current_real_weight, 0),
+                    'bird_count': None,
+                    'day_in_cycle': None,
+                    'status': 'emptying',
+                    'tech_data_used': False
+                }
 
             # 5. Szenzor frissítése
             if prediction:
