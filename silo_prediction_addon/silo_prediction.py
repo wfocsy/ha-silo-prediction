@@ -1297,36 +1297,75 @@ class SiloPredictor:
                 return
 
             # 3. AKTÍV FELTÖLTÉS ELLENŐRZÉS (NYERS adatokból!)
-            # Vizsgáljuk meg az utolsó 10 NYERS adatpontot: van-e nagy súlynövekedés?
-            if len(raw_data) >= 10:
-                recent_raw = raw_data[-10:]  # Utolsó 10 adatpont
+            # Vizsgáljuk meg az utolsó 20 NYERS adatpontot: van-e nagy súlynövekedés?
+            if len(raw_data) >= 20:
+                recent_raw = raw_data[-20:]  # Utolsó 20 adatpont
 
-                # Keresünk +3000 kg-nál nagyobb ugrást az utolsó 10 adatpontban
+                # Keresünk +3000 kg-nál nagyobb ugrást
+                last_refill_index = -1
+                last_refill_time = None
+
                 for i in range(1, len(recent_raw)):
                     weight_change = recent_raw[i][1] - recent_raw[i-1][1]
-                    time_diff_minutes = (recent_raw[i][0] - recent_raw[i-1][0]).total_seconds() / 60
 
-                    # Ha +3000 kg ugrás ÉS az utolsó 60 percben volt → AKTÍV FELTÖLTÉS
                     if weight_change > 3000:
-                        minutes_ago = (datetime.now(LOCAL_TZ) - recent_raw[i][0]).total_seconds() / 60
+                        last_refill_index = i
+                        last_refill_time = recent_raw[i][0]
 
-                        if minutes_ago < 60:  # Utolsó 1 órában
-                            logger.info(f"🔄 [{self.sensor_name}] AKTÍV FELTÖLTÉS DETEKTÁLVA!")
-                            logger.info(f"   Feltöltési időpont: {recent_raw[i][0].strftime('%Y-%m-%d %H:%M')}")
-                            logger.info(f"   Súlyváltozás: {recent_raw[i-1][1]:.0f} kg → {recent_raw[i][1]:.0f} kg (+{weight_change:.0f} kg)")
-                            logger.info(f"   {minutes_ago:.0f} perce történt")
+                # Ha volt feltöltés az utolsó 20 adatpontban
+                if last_refill_index > 0:
+                    minutes_since_refill = (datetime.now(LOCAL_TZ) - last_refill_time).total_seconds() / 60
+                    refill_weight_before = recent_raw[last_refill_index - 1][1]
+                    refill_weight_after = recent_raw[last_refill_index][1]
+                    refill_amount = refill_weight_after - refill_weight_before
 
-                            # Feltöltés alatt szenzor frissítése
-                            refilling_data = {
-                                'prediction_date': 'Feltöltés alatt',
+                    # FELTÖLTÉS ALATT van, ha < 20 perc múlt el ÓTA
+                    if minutes_since_refill < 20:
+                        logger.info(f"🔄 [{self.sensor_name}] AKTÍV FELTÖLTÉS DETEKTÁLVA!")
+                        logger.info(f"   Feltöltési időpont: {last_refill_time.strftime('%Y-%m-%d %H:%M')}")
+                        logger.info(f"   Súlyváltozás: {refill_weight_before:.0f} kg → {refill_weight_after:.0f} kg (+{refill_amount:.0f} kg)")
+                        logger.info(f"   {minutes_since_refill:.0f} perce történt")
+
+                        # Feltöltés alatt szenzor frissítése
+                        refilling_data = {
+                            'prediction_date': 'Feltöltés alatt',
+                            'days_until_empty': None,
+                            'current_weight': raw_data[-1][1],
+                            'bird_count': self.bird_count,
+                            'day_in_cycle': None,
+                            'status': 'refilling'
+                        }
+                        self.update_sensor(refilling_data)
+                        logger.info(f"✅ [{self.sensor_name}] Feltöltés alatt szenzor frissítve")
+                        return
+
+                    # FELTÖLTÉS VÉGET ÉRT (20-60 perc közötti), de VÁRUNK még előrejelzéssel
+                    elif minutes_since_refill < 60:
+                        # Ellenőrizzük, hogy van-e már fogyasztás
+                        current_weight = raw_data[-1][1]
+                        weight_after_refill = recent_raw[last_refill_index][1]
+                        consumption = weight_after_refill - current_weight
+
+                        if consumption > 50:  # Van fogyasztás
+                            logger.info(f"✅ [{self.sensor_name}] Feltöltés véget ért, fogyasztás megkezdődött")
+                            logger.info(f"   Feltöltés után: {weight_after_refill:.0f} kg, Most: {current_weight:.0f} kg")
+                            logger.info(f"   Fogyasztás: {consumption:.0f} kg")
+                            # Folytatjuk az előrejelzéssel...
+                        else:
+                            logger.info(f"⏳ [{self.sensor_name}] Feltöltés után várakozás fogyasztásra...")
+                            logger.info(f"   Feltöltés óta: {minutes_since_refill:.0f} perc")
+                            logger.info(f"   Súly: {current_weight:.0f} kg (változás: {consumption:.0f} kg)")
+
+                            # Várunk még, nem számolunk előrejelzést
+                            waiting_data = {
+                                'prediction_date': 'Feltöltés után, várakozás...',
                                 'days_until_empty': None,
-                                'current_weight': raw_data[-1][1],
+                                'current_weight': current_weight,
                                 'bird_count': self.bird_count,
                                 'day_in_cycle': None,
-                                'status': 'refilling'
+                                'status': 'waiting_after_refill'
                             }
-                            self.update_sensor(refilling_data)
-                            logger.info(f"✅ [{self.sensor_name}] Feltöltés alatt szenzor frissítve")
+                            self.update_sensor(waiting_data)
                             return
 
             # 2. NAPI mintavételezés (7:00-kor nap váltás)
