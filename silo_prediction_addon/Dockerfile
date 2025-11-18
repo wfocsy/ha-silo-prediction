@@ -19,6 +19,7 @@ RUN mkdir -p /app/logs
 
 # Copy application files
 COPY silo_prediction.py /app/
+COPY "Technológiai takarmányfogy.csv" /app/
 COPY run.sh /
 
 # Make run.sh executable

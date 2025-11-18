@@ -1,6 +1,6 @@
 name: "Silo Prediction"
 description: "Advanced silo empty prediction with technological feed data, daily sampling, and intelligent cycle detection - Multi-silo support"
-version: "6.0.0"
+version: "6.0.1"
 slug: "silo_prediction"
 init: false
 arch:
@@ -29,8 +29,8 @@ options:
       enable_growth_correction: true
       animal_age_days: 28.0
       growth_rate_kg_per_hour_per_day: 0.000201
-  prediction_days: 10
-  update_interval: 10800
+  prediction_days: 45
+  update_interval: 86400
 schema:
   silos:
     - entity_id: str
@@ -40,5 +40,5 @@ schema:
       enable_growth_correction: bool?
       animal_age_days: float?
       growth_rate_kg_per_hour_per_day: float?
-  prediction_days: int(1,30)
-  update_interval: int(300,21600)
+  prediction_days: int(1,60)
+  update_interval: int(300,86400)
