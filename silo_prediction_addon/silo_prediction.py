@@ -363,16 +363,18 @@ class SiloPredictor:
         """
         0. nap detektálása: INTELLIGENS első feltöltés detektálás + 100kg+ súlycsökkenés napja
 
-        Logika:
-        1. Keresünk ~5 napos "csend" periódust (előző ciklus vége):
+        Logika (KÉTLÉPCSŐS):
+        1. ELSŐDLEGES: Keresünk ~5 napos "csend" periódust (előző ciklus vége):
            - Siló súlya < 1000 kg
            - Nincs jelentős fogyasztás (< 50 kg/nap)
-        2. Ezt követő 3000kg+ ugrás = ELSŐ FELTÖLTÉS (új ciklus kezdete)
+           - Ezt követő 3000kg+ ugrás = ELSŐ FELTÖLTÉS (új ciklus kezdete)
+        2. FALLBACK: Ha nincs csend periódus, keresünk nagy (10000kg+) feltöltést
+           - Ez valószínűleg ciklus kezdő feltöltés
         3. Utána keressük az első 100kg+ csökkenést egy nap alatt
         4. Ez lesz a 0. nap (állomány érkezése)
 
         Args:
-            data: Mintavételezett adatok (napi)
+            data: Mintavételezett adatok (6 óránként)
 
         Returns:
             0. nap dátuma vagy None
@@ -380,7 +382,7 @@ class SiloPredictor:
         if len(data) < 7:  # Minimum 7 nap adat kell
             return None
 
-        # 1. Csend periódus + első feltöltés keresése
+        # 1. ELSŐDLEGES: Csend periódus + első feltöltés keresése
         first_refill_index = -1
 
         for i in range(5, len(data)):  # Legalább 5 nap múltbeli adat kell
@@ -407,18 +409,32 @@ class SiloPredictor:
 
                 if weight_change > 3000:
                     first_refill_index = i
-                    logger.info(f"📍 [{self.sensor_name}] Csend periódusDetektálva: "
+                    logger.info(f"📍 [{self.sensor_name}] Csend periódus detektálva: "
                                f"{data[i-5][0].strftime('%Y-%m-%d')} - {data[i-1][0].strftime('%Y-%m-%d')} "
                                f"(súly < 1000 kg, nincs fogyasztás)")
-                    logger.info(f"📍 [{self.sensor_name}] ELSŐ FELTÖLTÉS: {data[i][0].strftime('%Y-%m-%d')}, "
+                    logger.info(f"📍 [{self.sensor_name}] ELSŐ FELTÖLTÉS (csend után): {data[i][0].strftime('%Y-%m-%d')}, "
+                               f"+{weight_change:.0f} kg → súly: {data[i][1]:.0f} kg")
+                    break
+
+        # 2. FALLBACK: Ha nincs csend periódus, keresünk nagy (10000kg+) feltöltést
+        if first_refill_index < 0:
+            logger.info(f"🔍 [{self.sensor_name}] Csend periódus nem található, alternatív módszer: nagy feltöltés keresése...")
+
+            for i in range(1, len(data)):
+                weight_change = data[i][1] - data[i-1][1]
+
+                # Nagy feltöltés (10000kg+) = valószínűleg ciklus kezdő feltöltés
+                if weight_change > 10000:
+                    first_refill_index = i
+                    logger.info(f"📍 [{self.sensor_name}] NAGY FELTÖLTÉS detektálva (ciklus kezdet): {data[i][0].strftime('%Y-%m-%d')}, "
                                f"+{weight_change:.0f} kg → súly: {data[i][1]:.0f} kg")
                     break
 
         if first_refill_index < 0:
-            logger.warning(f"⚠️ [{self.sensor_name}] Nem található első feltöltés (csend periódus után)")
+            logger.warning(f"⚠️ [{self.sensor_name}] Nem található ciklus kezdő feltöltés (sem csend után, sem nagy feltöltés)")
             return None
 
-        # 2. Első feltöltés után keresés 100kg+ napi csökkenésre
+        # 3. Első feltöltés után keresés 100kg+ napi csökkenésre
         for i in range(first_refill_index + 1, len(data)):
             prev_day_weight = data[i - 1][1]
             current_weight = data[i][1]
