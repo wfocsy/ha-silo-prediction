@@ -17,7 +17,8 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 # Create app and logs directory
 RUN mkdir -p /app/logs
 
-# Copy application files - v6.5.4 exponential acceleration model
+# Cache invalidation: v6.5.4-hotfix-ae918d4
+# Copy application files - v6.5.4 exponential acceleration model with AttributeError fix
 COPY silo_prediction.py /app/
 COPY tech_feed_data.csv /app/
 COPY run.sh /
