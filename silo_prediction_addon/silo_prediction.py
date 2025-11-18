@@ -757,18 +757,20 @@ class SiloPredictor:
         Returns:
             [(timestamp, weight), ...] 5 percenként
         """
+        url = f"{self.ha_url}/api/history/period/{start_time.isoformat()}"
         params = {
-            'type': 'history',
-            'entity_id': self.entity_id,
-            'start_time': start_time.isoformat(),
+            'filter_entity_id': self.entity_id,
             'end_time': end_time.isoformat()
         }
 
-        response = self._make_ha_request('GET', '/api/history/period', params=params)
-        if not response:
+        try:
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
+            response.raise_for_status()
+            history = response.json()
+        except Exception as e:
+            logger.error(f"❌ [{self.sensor_name}] 5min resample API hiba: {e}")
             return []
 
-        history = response.json()
         if not history or len(history) == 0:
             return []
 
