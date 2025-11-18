@@ -17,7 +17,7 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 # Create app and logs directory
 RUN mkdir -p /app/logs
 
-# Copy application files
+# Copy application files - v6.5.4 exponential acceleration model
 COPY silo_prediction.py /app/
 COPY tech_feed_data.csv /app/
 COPY run.sh /
