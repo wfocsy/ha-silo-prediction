@@ -1672,6 +1672,23 @@ class SiloPredictor:
                     prediction_time, days_until = self.predict_with_exp_only(
                         current_real_weight, normalized_simple, base_rate, acceleration
                     )
+
+                    # Formázott dátum
+                    formatted_date, window_midpoint_hours = self._format_prediction_with_window(prediction_time)
+                    days_until_midpoint = window_midpoint_hours / 24.0
+
+                    # Nevelési nap (ha van cycle_start_date)
+                    current_day = (datetime.now(LOCAL_TZ) - self.cycle_start_date).days if self.cycle_start_date else None
+
+                    prediction = {
+                        'prediction_date': formatted_date,
+                        'days_until_empty': round(days_until_midpoint, 2),
+                        'current_weight': round(current_real_weight, 0),
+                        'bird_count': None,
+                        'day_in_cycle': current_day,
+                        'status': 'emptying',
+                        'tech_data_used': False
+                    }
                 else:
                     # Átlag madárszám
                     avg_bird_count = int(np.mean(list(bird_counts.values())))
