@@ -43,7 +43,7 @@ class TechnologicalFeedData:
     CSV fájlból betöltés és interpoláció
     """
 
-    def __init__(self, csv_path: str = '/app/Technológiai takarmányfogy.csv'):
+    def __init__(self, csv_path: str = '/app/tech_feed_data.csv'):
         self.csv_path = csv_path
         self.feed_data = {}  # {day: grams_per_day}
         self._load_csv()
@@ -134,7 +134,7 @@ class SiloPredictor:
 
     def __init__(self, ha_url: str, ha_token: str, entity_id: str, sensor_name: str,
                  refill_threshold: int, max_capacity: int, prediction_days: int = 45,
-                 tech_csv_path: str = '/app/Technológiai takarmányfogy.csv'):
+                 tech_csv_path: str = '/app/tech_feed_data.csv'):
         self.ha_url = ha_url
         self.ha_token = ha_token
         self.entity_id = entity_id
@@ -1236,7 +1236,7 @@ class MultiSiloManager:
                     refill_threshold=silo_cfg.get('refill_threshold', 1000),
                     max_capacity=silo_cfg.get('max_capacity', 20000),
                     prediction_days=self.prediction_days,
-                    tech_csv_path='/app/Technológiai takarmányfogy.csv'
+                    tech_csv_path='/app/tech_feed_data.csv'
                 )
                 silos.append(silo)
             except KeyError as e:
