@@ -1280,6 +1280,39 @@ class SiloPredictor:
                 logger.warning(f"⚠️ [{self.sensor_name}] Nincs adat")
                 return
 
+            # 3. AKTÍV FELTÖLTÉS ELLENŐRZÉS (NYERS adatokból!)
+            # Vizsgáljuk meg az utolsó 10 NYERS adatpontot: van-e nagy súlynövekedés?
+            if len(raw_data) >= 10:
+                recent_raw = raw_data[-10:]  # Utolsó 10 adatpont
+
+                # Keresünk +3000 kg-nál nagyobb ugrást az utolsó 10 adatpontban
+                for i in range(1, len(recent_raw)):
+                    weight_change = recent_raw[i][1] - recent_raw[i-1][1]
+                    time_diff_minutes = (recent_raw[i][0] - recent_raw[i-1][0]).total_seconds() / 60
+
+                    # Ha +3000 kg ugrás ÉS az utolsó 60 percben volt → AKTÍV FELTÖLTÉS
+                    if weight_change > 3000:
+                        minutes_ago = (datetime.now(LOCAL_TZ) - recent_raw[i][0]).total_seconds() / 60
+
+                        if minutes_ago < 60:  # Utolsó 1 órában
+                            logger.info(f"🔄 [{self.sensor_name}] AKTÍV FELTÖLTÉS DETEKTÁLVA!")
+                            logger.info(f"   Feltöltési időpont: {recent_raw[i][0].strftime('%Y-%m-%d %H:%M')}")
+                            logger.info(f"   Súlyváltozás: {recent_raw[i-1][1]:.0f} kg → {recent_raw[i][1]:.0f} kg (+{weight_change:.0f} kg)")
+                            logger.info(f"   {minutes_ago:.0f} perce történt")
+
+                            # Feltöltés alatt szenzor frissítése
+                            refilling_data = {
+                                'prediction_date': 'Feltöltés alatt',
+                                'days_until_empty': None,
+                                'current_weight': raw_data[-1][1],
+                                'bird_count': self.bird_count,
+                                'day_in_cycle': None,
+                                'status': 'refilling'
+                            }
+                            self.update_sensor(refilling_data)
+                            logger.info(f"✅ [{self.sensor_name}] Feltöltés alatt szenzor frissítve")
+                            return
+
             # 2. NAPI mintavételezés (7:00-kor nap váltás)
             daily_data = self.sample_daily_data(raw_data)
 
@@ -1289,33 +1322,6 @@ class SiloPredictor:
 
             # Jelenlegi VALÓS súly (utolsó mért érték)
             current_real_weight = daily_data[-1][1]
-
-            # 3. AKTÍV FELTÖLTÉS ELLENŐRZÉS
-            # Vizsgáljuk meg az utolsó 3 adatpontot: van-e növekvő trend?
-            if len(daily_data) >= 3:
-                recent_weights = [w for _, w in daily_data[-3:]]
-                weight_change = recent_weights[-1] - recent_weights[-2]
-
-                # Ha az utolsó 2 mérés között +500 kg-nál nagyobb a változás → FELTÖLTÉS ALATT
-                # (Normál esetben CSÖKKENÉS van, ezért bármilyen nagyobb növekedés = feltöltés)
-                if weight_change > 500:
-                    hours_since_last = (datetime.now(LOCAL_TZ) - daily_data[-1][0]).total_seconds() / 3600
-                    logger.info(f"🔄 [{self.sensor_name}] AKTÍV FELTÖLTÉS DETEKTÁLVA!")
-                    logger.info(f"   Súlyváltozás: {recent_weights[-2]:.0f} kg → {recent_weights[-1]:.0f} kg (+{weight_change:.0f} kg)")
-                    logger.info(f"   Utolsó mérés: {hours_since_last:.1f} órája")
-
-                    # Feltöltés alatt szenzor frissítése
-                    refilling_data = {
-                        'prediction_date': 'Feltöltés alatt',
-                        'days_until_empty': None,
-                        'current_weight': current_real_weight,
-                        'bird_count': self.bird_count,
-                        'day_in_cycle': None,
-                        'status': 'refilling'
-                    }
-                    self.update_sensor(refilling_data)
-                    logger.info(f"✅ [{self.sensor_name}] Feltöltés alatt szenzor frissítve")
-                    return
 
             # Alternatív feltöltés detekció: ha az utolsó adatpont alapján
             # a súly közeli a max kapacitáshoz ÉS nincs még előrejelzés
