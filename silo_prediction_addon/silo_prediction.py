@@ -1261,13 +1261,14 @@ class SiloPredictor:
         ÚJ LOGIKA:
         1. 45 napos adatok lekérése
         2. 6 ÓRÁNKÉNTI mintavételezés (7:00, 13:00, 19:00, 1:00) - napi 4 adatpont
-        3. 0. nap (ciklus kezdet) detektálás próbálkozás
-        4a. HA SIKERÜLT 0. nap detektálás:
+        3. AKTÍV FELTÖLTÉS ELLENŐRZÉS (utolsó 3 adatpont vizsgálata)
+        4. 0. nap (ciklus kezdet) detektálás próbálkozás
+        5a. HA SIKERÜLT 0. nap detektálás:
             - Folyamatos görbe (normalizált, 6óránként) → madár darabszám + korrekciós szorzó
             - Előrejelzés technológiai adatok + VALÓS jelenlegi súly
-        4b. HA NEM SIKERÜLT 0. nap detektálás:
+        5b. HA NEM SIKERÜLT 0. nap detektálás:
             - FALLBACK: Exponenciális regresszió utolsó feltöltés utáni adatokra
-        5. Szenzor frissítése
+        6. Szenzor frissítése
         """
         try:
             logger.info(f"🔄 [{self.sensor_name}] Feldolgozás indítása...")
@@ -1289,7 +1290,40 @@ class SiloPredictor:
             # Jelenlegi VALÓS súly (utolsó mért érték)
             current_real_weight = daily_data[-1][1]
 
-            # 3. 0. nap detektálás (ha még nincs)
+            # 3. AKTÍV FELTÖLTÉS ELLENŐRZÉS
+            # Vizsgáljuk meg az utolsó 3 adatpontot: van-e növekvő trend?
+            if len(daily_data) >= 3:
+                recent_weights = [w for _, w in daily_data[-3:]]
+                weight_change = recent_weights[-1] - recent_weights[-2]
+
+                # Ha az utolsó 2 mérés között +500 kg-nál nagyobb a változás → FELTÖLTÉS ALATT
+                # (Normál esetben CSÖKKENÉS van, ezért bármilyen nagyobb növekedés = feltöltés)
+                if weight_change > 500:
+                    hours_since_last = (datetime.now(LOCAL_TZ) - daily_data[-1][0]).total_seconds() / 3600
+                    logger.info(f"🔄 [{self.sensor_name}] AKTÍV FELTÖLTÉS DETEKTÁLVA!")
+                    logger.info(f"   Súlyváltozás: {recent_weights[-2]:.0f} kg → {recent_weights[-1]:.0f} kg (+{weight_change:.0f} kg)")
+                    logger.info(f"   Utolsó mérés: {hours_since_last:.1f} órája")
+
+                    # Feltöltés alatt szenzor frissítése
+                    refilling_data = {
+                        'prediction_date': 'Feltöltés alatt',
+                        'days_until_empty': None,
+                        'current_weight': current_real_weight,
+                        'bird_count': self.bird_count,
+                        'day_in_cycle': None,
+                        'status': 'refilling'
+                    }
+                    self.update_sensor(refilling_data)
+                    logger.info(f"✅ [{self.sensor_name}] Feltöltés alatt szenzor frissítve")
+                    return
+
+            # Alternatív feltöltés detekció: ha az utolsó adatpont alapján
+            # a súly közeli a max kapacitáshoz ÉS nincs még előrejelzés
+            if current_real_weight > self.max_capacity * 0.9:  # 90% felett
+                logger.info(f"🔄 [{self.sensor_name}] Magas súly detektálva: {current_real_weight:.0f} kg (> 90% kapacitás)")
+                logger.info(f"   Ez valószínűleg feltöltés utáni állapot, várakozás fogyasztásra...")
+
+            # 4. 0. nap detektálás (ha még nincs)
             cycle_start_detected = False
             if not self.cycle_start_date:
                 cycle_start = self.detect_cycle_start(daily_data)
