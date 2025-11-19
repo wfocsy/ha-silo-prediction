@@ -1476,6 +1476,7 @@ class SiloPredictor:
 
         attributes = {
             'prediction_date': prediction_date,
+            'predicted_empty_timestamp': prediction_data.get('predicted_empty_timestamp'),
             'days_until_empty': prediction_data.get('days_until_empty'),
             'current_weight_kg': prediction_data.get('current_weight'),
             'bird_count': prediction_data.get('bird_count'),
@@ -1682,6 +1683,7 @@ class SiloPredictor:
 
                     prediction = {
                         'prediction_date': formatted_date,
+                        'predicted_empty_timestamp': prediction_time.isoformat(),
                         'days_until_empty': round(days_until_midpoint, 2),
                         'current_weight': round(current_real_weight, 0),
                         'bird_count': None,
@@ -1708,6 +1710,7 @@ class SiloPredictor:
 
                     prediction = {
                         'prediction_date': formatted_date,
+                        'predicted_empty_timestamp': prediction_time.isoformat(),
                         'days_until_empty': round(days_until_midpoint, 2),
                         'current_weight': round(current_real_weight, 0),
                         'bird_count': avg_bird_count,
@@ -1731,6 +1734,7 @@ class SiloPredictor:
 
                 prediction = {
                     'prediction_date': formatted_date,
+                    'predicted_empty_timestamp': prediction_time.isoformat(),
                     'days_until_empty': round(days_until_midpoint, 2),
                     'current_weight': round(current_real_weight, 0),
                     'bird_count': None,
