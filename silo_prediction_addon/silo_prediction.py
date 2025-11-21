@@ -1917,7 +1917,9 @@ class MultiSiloManager:
         logger.info(f"⚡ Feltöltés utáni frissítés: 20 perc várakozás után")
 
         REFILL_CHECK_INTERVAL = 60  # 1 perc
+        REFILL_COOLDOWN = 90 * 60  # 90 perc cooldown feltöltés feldolgozás után
         last_process_date = None  # Utolsó feldolgozás dátuma (éjféli logikához)
+        last_refill_time = 0  # Utolsó feltöltés feldolgozás időpontja (cooldown)
 
         while True:
             try:
@@ -1941,10 +1943,18 @@ class MultiSiloManager:
                     last_process_date = current_date
 
                 # Folyamatos refill monitoring (1 percenként)
+                # COOLDOWN: ne detektálja újra ugyanazt a feltöltést
+                time_since_refill = time.time() - last_refill_time
                 refill_detected = False
-                for silo in self.silos:
-                    if self._check_recent_refill(silo):
-                        refill_detected = True
+
+                if time_since_refill >= REFILL_COOLDOWN:
+                    for silo in self.silos:
+                        if self._check_recent_refill(silo):
+                            refill_detected = True
+                else:
+                    remaining = int((REFILL_COOLDOWN - time_since_refill) / 60)
+                    if remaining % 10 == 0:  # Csak 10 percenként logol
+                        logger.info(f"⏸️ Refill cooldown: {remaining} perc hátra")
 
                 # Ha feltöltést detektáltunk, várunk 20 percet és újra feldolgozunk
                 if refill_detected:
@@ -1957,6 +1967,8 @@ class MultiSiloManager:
                         silo.process()
 
                     logger.info(f"✅ Feltöltés utáni frissítés befejezve")
+                    last_refill_time = time.time()  # COOLDOWN INDÍTÁS
+                    logger.info(f"⏸️ Refill cooldown indítva (90 perc - nem detektál új feltöltést)")
 
                 # Következő refill check (1 perc múlva)
                 time.sleep(REFILL_CHECK_INTERVAL)
