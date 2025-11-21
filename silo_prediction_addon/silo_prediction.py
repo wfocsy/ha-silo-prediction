@@ -1628,8 +1628,9 @@ class SiloPredictor:
                 logger.warning(f"⚠️ [{self.sensor_name}] Nincs napi mintavételezett adat")
                 return
 
-            # Jelenlegi VALÓS súly (utolsó mért érték)
-            current_real_weight = daily_data[-1][1]
+            # Jelenlegi VALÓS súly (raw_data utolsó eleme - NEM a 6 órás minta!)
+            current_real_weight = raw_data[-1][1]
+            logger.info(f"📊 [{self.sensor_name}] Jelenlegi VALÓS súly: {current_real_weight:.0f} kg")
 
             # 4. Normalizált görbe készítése (csak timestamp, weight párokat használunk)
             normalized_simple = [(t, w) for t, w, _, _ in daily_data] if daily_data and len(daily_data[0]) == 4 else daily_data
