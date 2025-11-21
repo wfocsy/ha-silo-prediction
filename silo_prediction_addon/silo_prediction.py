@@ -1810,21 +1810,21 @@ class MultiSiloManager:
 
     def _check_recent_refill(self, silo: 'SiloPredictor') -> bool:
         """
-        Ellenőrzi, hogy volt-e friss feltöltés az elmúlt 60 percben
+        Ellenőrzi, hogy volt-e friss feltöltés az elmúlt 15 percben
 
-        JAVÍTOTT LOGIKA: Az utolsó 60 perc min/max értékeiből számítja az összesített
+        JAVÍTOTT LOGIKA: Az utolsó 15 perc min/max értékeiből számítja az összesített
         emelkedést, nem csak két szomszédos pontot néz (ami 10kg-os lépésekkel nem működik)
 
         Args:
             silo: SiloPredictor példány
 
         Returns:
-            True ha volt friss feltöltés (1000+ kg emelkedés az elmúlt 60 percben)
+            True ha volt friss feltöltés (100+ kg emelkedés az elmúlt 15 percben)
         """
         try:
-            # Utolsó 60 perc adat lekérése
+            # Utolsó 15 perc adat lekérése
             end_time = datetime.now(LOCAL_TZ)
-            start_time = end_time - timedelta(minutes=60)
+            start_time = end_time - timedelta(minutes=15)
 
             url = f"{self.ha_url}/api/history/period/{start_time.isoformat()}"
             params = {
@@ -1858,7 +1858,7 @@ class MultiSiloManager:
             # Rendezés időrendbe
             weights_with_time.sort(key=lambda x: x[0])
 
-            # Keressük az utolsó 60 percben a legnagyobb folyamatos emelkedést
+            # Keressük az utolsó 15 percben a legnagyobb folyamatos emelkedést
             # Módszer: csúszó ablakban nézzük, hol kezdődik/végződik a feltöltés
             min_weight = float('inf')
             min_time = None
@@ -1882,9 +1882,9 @@ class MultiSiloManager:
             last_data_time = weights_with_time[-1][0]
             minutes_since_end = (datetime.now(LOCAL_TZ) - last_data_time).total_seconds() / 60
 
-            # FELTÖLTÉS DETEKTÁLÁS: 100+ kg emelkedés az elmúlt 60 percben
-            # ÉS az utolsó adat 30 percen belül volt (aktív feltöltés vagy nemrég befejeződött)
-            if total_rise > 100 and minutes_since_end < 30:
+            # FELTÖLTÉS DETEKTÁLÁS: 100+ kg emelkedés az elmúlt 15 percben
+            # ÉS az utolsó adat 10 percen belül volt (aktív feltöltés vagy nemrég befejeződött)
+            if total_rise > 100 and minutes_since_end < 10:
                 logger.info(f"🔄 [{silo.sensor_name}] FRISS FELTÖLTÉS DETEKTÁLVA!")
                 logger.info(f"   📊 Min: {min_weight:.0f} kg ({min_time.strftime('%H:%M') if min_time else 'N/A'})")
                 logger.info(f"   📊 Max: {max_weight_after_min:.0f} kg ({max_time.strftime('%H:%M') if max_time else 'N/A'})")
