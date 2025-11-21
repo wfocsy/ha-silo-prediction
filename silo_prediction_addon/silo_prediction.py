@@ -1810,18 +1810,21 @@ class MultiSiloManager:
 
     def _check_recent_refill(self, silo: 'SiloPredictor') -> bool:
         """
-        Ellenőrzi, hogy volt-e friss feltöltés az elmúlt 20 percben
+        Ellenőrzi, hogy volt-e friss feltöltés az elmúlt 60 percben
+
+        JAVÍTOTT LOGIKA: Az utolsó 60 perc min/max értékeiből számítja az összesített
+        emelkedést, nem csak két szomszédos pontot néz (ami 10kg-os lépésekkel nem működik)
 
         Args:
             silo: SiloPredictor példány
 
         Returns:
-            True ha volt friss feltöltés (< 20 perc)
+            True ha volt friss feltöltés (1000+ kg emelkedés az elmúlt 60 percben)
         """
         try:
-            # Utolsó 1 óra adat lekérése
+            # Utolsó 60 perc adat lekérése
             end_time = datetime.now(LOCAL_TZ)
-            start_time = end_time - timedelta(hours=1)
+            start_time = end_time - timedelta(minutes=60)
 
             url = f"{self.ha_url}/api/history/period/{start_time.isoformat()}"
             params = {
@@ -1834,32 +1837,60 @@ class MultiSiloManager:
                 return False
 
             data = response.json()
-            if not data or not data[0]:
+            if not data or not data[0] or len(data[0]) < 5:
                 return False
 
-            # Utolsó 2 adatpont vizsgálata
-            recent_data = data[0][-2:] if len(data[0]) >= 2 else data[0]
-
-            for i in range(1, len(recent_data)):
+            # Összes adat értelmezése - keresünk min → max emelkedést
+            weights_with_time = []
+            for item in data[0]:
                 try:
-                    prev_weight = float(recent_data[i-1].get('state', 0))
-                    curr_weight = float(recent_data[i].get('state', 0))
-                    weight_change = curr_weight - prev_weight
-
-                    timestamp_str = recent_data[i].get('last_changed', '')
+                    weight = float(item.get('state', 0))
+                    timestamp_str = item.get('last_changed', '')
                     timestamp_utc = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                     timestamp = timestamp_utc.astimezone(LOCAL_TZ)
-
-                    minutes_ago = (datetime.now(LOCAL_TZ) - timestamp).total_seconds() / 60
-
-                    # Feltöltés detektálás: +3000 kg az elmúlt 20 percben
-                    if weight_change > 3000 and minutes_ago < 20:
-                        logger.info(f"🔄 [{silo.sensor_name}] Friss feltöltés detektálva: "
-                                   f"{minutes_ago:.0f} perce, +{weight_change:.0f} kg")
-                        return True
-
+                    weights_with_time.append((timestamp, weight))
                 except (ValueError, KeyError, TypeError):
                     continue
+
+            if len(weights_with_time) < 5:
+                return False
+
+            # Rendezés időrendbe
+            weights_with_time.sort(key=lambda x: x[0])
+
+            # Keressük az utolsó 60 percben a legnagyobb folyamatos emelkedést
+            # Módszer: csúszó ablakban nézzük, hol kezdődik/végződik a feltöltés
+            min_weight = float('inf')
+            min_time = None
+            max_weight_after_min = 0
+            max_time = None
+
+            for ts, weight in weights_with_time:
+                if weight < min_weight:
+                    min_weight = weight
+                    min_time = ts
+                    max_weight_after_min = weight  # Reset
+                    max_time = ts
+                elif weight > max_weight_after_min:
+                    max_weight_after_min = weight
+                    max_time = ts
+
+            # Összesített emelkedés
+            total_rise = max_weight_after_min - min_weight
+
+            # Mennyi ideje fejeződött be (utolsó adat timestamp)
+            last_data_time = weights_with_time[-1][0]
+            minutes_since_end = (datetime.now(LOCAL_TZ) - last_data_time).total_seconds() / 60
+
+            # FELTÖLTÉS DETEKTÁLÁS: 100+ kg emelkedés az elmúlt 60 percben
+            # ÉS az utolsó adat 30 percen belül volt (aktív feltöltés vagy nemrég befejeződött)
+            if total_rise > 100 and minutes_since_end < 30:
+                logger.info(f"🔄 [{silo.sensor_name}] FRISS FELTÖLTÉS DETEKTÁLVA!")
+                logger.info(f"   📊 Min: {min_weight:.0f} kg ({min_time.strftime('%H:%M') if min_time else 'N/A'})")
+                logger.info(f"   📊 Max: {max_weight_after_min:.0f} kg ({max_time.strftime('%H:%M') if max_time else 'N/A'})")
+                logger.info(f"   📈 Összes emelkedés: +{total_rise:.0f} kg")
+                logger.info(f"   ⏱️ Utolsó adat: {minutes_since_end:.0f} perce")
+                return True
 
             return False
 
@@ -1872,7 +1903,8 @@ class MultiSiloManager:
         Fő futási ciklus - periodikusan feldolgozza az összes silót
 
         FRISSÍTÉSI LOGIKA:
-        - Normál: 24 óránként
+        - Napi predikció: ÉJFÉLKOR (00:00) + induláskor
+        - Folyamatos monitoring: 1 percenként ellenőrzi a feltöltéseket (100+ kg)
         - Feltöltés után: 20 perc várakozás, majd AZONNALI frissítés
         """
         # Várakozás Home Assistant core felállására (502 Bad Gateway elkerülése)
@@ -1880,39 +1912,54 @@ class MultiSiloManager:
         time.sleep(30)
 
         logger.info("🔄 Multi-Silo Prediction szolgáltatás indítva")
-        logger.info(f"📊 Normál frissítési intervallum: {self.update_interval / 3600:.0f} óra")
+        logger.info(f"📊 Napi predikció frissítés: ÉJFÉLKOR (00:00)")
+        logger.info(f"⚡ Feltöltés monitoring: 1 percenként (100+ kg küszöb)")
         logger.info(f"⚡ Feltöltés utáni frissítés: 20 perc várakozás után")
+
+        REFILL_CHECK_INTERVAL = 60  # 1 perc
+        last_process_date = None  # Utolsó feldolgozás dátuma (éjféli logikához)
 
         while True:
             try:
-                logger.info("=" * 60)
-                logger.info(f"🔄 Új feldolgozási ciklus kezdődik ({len(self.silos)} silo)")
+                now = datetime.now(LOCAL_TZ)
+                current_date = now.date()
 
+                # ÉJFÉLI FRISSÍTÉS: ha új nap van VAGY első indulás
+                need_full_process = (last_process_date is None or current_date > last_process_date)
+
+                if need_full_process:
+                    logger.info("=" * 60)
+                    if last_process_date is None:
+                        logger.info(f"🚀 INDULÁSI feldolgozás ({len(self.silos)} silo)")
+                    else:
+                        logger.info(f"🌙 ÉJFÉLI feldolgozás ({len(self.silos)} silo) - {current_date}")
+
+                    for silo in self.silos:
+                        silo.process()
+
+                    logger.info(f"✅ Feldolgozási ciklus befejezve")
+                    last_process_date = current_date
+
+                # Folyamatos refill monitoring (1 percenként)
                 refill_detected = False
-
                 for silo in self.silos:
-                    silo.process()
-
-                    # Ellenőrizzük, hogy volt-e friss feltöltés
                     if self._check_recent_refill(silo):
                         refill_detected = True
 
-                logger.info(f"✅ Feldolgozási ciklus befejezve")
-
-                # Feltöltés utáni logika
+                # Ha feltöltést detektáltunk, várunk 20 percet és újra feldolgozunk
                 if refill_detected:
-                    logger.info(f"⚡ Feltöltés detektálva! Várakozás 20 perc, majd újra futtatás...")
-                    time.sleep(20 * 60)  # 20 perc = 1200 másodperc
+                    logger.info(f"⚡ FELTÖLTÉS DETEKTÁLVA! Várakozás 20 perc, majd újra feldolgozás...")
+                    time.sleep(20 * 60)  # 20 perc
 
-                    logger.info("🔄 Feltöltés utáni újra futtatás...")
+                    logger.info("=" * 60)
+                    logger.info("🔄 Feltöltés utáni AZONNALI újrafeldolgozás...")
                     for silo in self.silos:
                         silo.process()
 
                     logger.info(f"✅ Feltöltés utáni frissítés befejezve")
 
-                # Normál várakozás
-                logger.info(f"⏰ Következő frissítés {self.update_interval / 3600:.0f} óra múlva...")
-                time.sleep(self.update_interval)
+                # Következő refill check (1 perc múlva)
+                time.sleep(REFILL_CHECK_INTERVAL)
 
             except Exception as e:
                 logger.error(f"❌ Hiba a futás során: {e}", exc_info=True)
